@@ -1,8 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useActionState, useState } from "react";
+import { useFormStatus } from "react-dom";
 import {
   ArrowRight,
   Eye,
@@ -14,45 +13,35 @@ import {
   WalletCards,
 } from "lucide-react";
 
+import { loginAction } from "./actions";
+
+function SubmitButton() {
+  const { pending } = useFormStatus();
+
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#6842d9] font-semibold text-white shadow-lg shadow-[#6842d9]/20 transition hover:bg-[#5935c7] disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {pending ? (
+        "Ingresando..."
+      ) : (
+        <>
+          Ingresar
+          <ArrowRight size={19} />
+        </>
+      )}
+    </button>
+  );
+}
+
 export default function LoginForm() {
-  const router = useRouter();
-
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [error, formAction] = useActionState(loginAction, undefined);
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    setLoading(true);
-    setError("");
-
-    try {
-      const result = await signIn("credentials", {
-        email,
-        password,
-        redirect: false,
-      });
-
-      if (!result || result.error) {
-        setError("Correo o contraseña incorrectos.");
-        setLoading(false);
-        return;
-      }
-
-      router.push("/dashboard");
-      router.refresh();
-    } catch {
-      setError("No pudimos iniciar sesión. Intenta nuevamente.");
-      setLoading(false);
-    }
-  }
 
   return (
     <main className="min-h-screen bg-[#f7f7fb] lg:grid lg:grid-cols-2">
-      {/* LADO IZQUIERDO */}
       <section className="relative hidden overflow-hidden bg-[#6842d9] p-12 text-white lg:flex lg:flex-col lg:justify-between">
         <div className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-white/10" />
         <div className="absolute -bottom-32 -right-24 h-96 w-96 rounded-full bg-white/10" />
@@ -109,10 +98,8 @@ export default function LoginForm() {
         </p>
       </section>
 
-      {/* LOGIN */}
       <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-8">
         <div className="w-full max-w-[430px]">
-          {/* Logo móvil */}
           <div className="mb-10 flex items-center gap-3 lg:hidden">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#6842d9] text-white">
               <WalletCards size={23} />
@@ -138,7 +125,7 @@ export default function LoginForm() {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form action={formAction} className="space-y-5">
             <div>
               <label
                 htmlFor="email"
@@ -155,11 +142,10 @@ export default function LoginForm() {
 
                 <input
                   id="email"
+                  name="email"
                   type="email"
                   autoComplete="email"
                   required
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
                   placeholder="tu@correo.com"
                   className="h-14 w-full rounded-2xl border border-[#e5e2ea] bg-white pl-12 pr-4 text-[15px] text-[#28252e] outline-none transition placeholder:text-[#b6b2bd] focus:border-[#6842d9] focus:ring-4 focus:ring-[#6842d9]/10"
                 />
@@ -182,11 +168,10 @@ export default function LoginForm() {
 
                 <input
                   id="password"
+                  name="password"
                   type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
                   required
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
                   placeholder="Tu contraseña"
                   className="h-14 w-full rounded-2xl border border-[#e5e2ea] bg-white pl-12 pr-12 text-[15px] text-[#28252e] outline-none transition placeholder:text-[#b6b2bd] focus:border-[#6842d9] focus:ring-4 focus:ring-[#6842d9]/10"
                 />
@@ -210,20 +195,7 @@ export default function LoginForm() {
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#6842d9] font-semibold text-white shadow-lg shadow-[#6842d9]/20 transition hover:bg-[#5935c7] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loading ? (
-                "Ingresando..."
-              ) : (
-                <>
-                  Ingresar
-                  <ArrowRight size={19} />
-                </>
-              )}
-            </button>
+            <SubmitButton />
           </form>
 
           <div className="mt-8 border-t border-[#ebe8ef] pt-6 text-center">

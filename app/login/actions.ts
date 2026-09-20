@@ -1,21 +1,28 @@
 "use server";
 
-import { AuthError } from "next-auth";
 import { signIn } from "@/auth";
+import { AuthError } from "next-auth";
 
-export async function authenticate(
+export async function loginAction(
   previousState: string | undefined,
   formData: FormData,
 ) {
   try {
-    await signIn("credentials", formData);
+    const email = String(formData.get("email") ?? "");
+    const password = String(formData.get("password") ?? "");
+
+    await signIn("credentials", {
+      email,
+      password,
+      redirectTo: "/dashboard",
+    });
   } catch (error) {
     if (error instanceof AuthError) {
       if (error.type === "CredentialsSignin") {
         return "Correo o contraseña incorrectos.";
       }
 
-      return "Ocurrió un error al iniciar sesión.";
+      return "No pudimos iniciar sesión. Intenta nuevamente.";
     }
 
     throw error;
