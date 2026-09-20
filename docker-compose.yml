@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: mi-bolsillo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mibolsillo
+      POSTGRES_PASSWORD: mibolsillo_dev
+      POSTGRES_DB: mibolsillo
+    ports:
+      - "5432:5432"
+    volumes:
+      - mi_bolsillo_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  mi_bolsillo_postgres_data:
