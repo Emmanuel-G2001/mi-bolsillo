@@ -48,6 +48,7 @@ type FinanceResponse = {
   month: string;
 
   previousBalance: number;
+  savings: number;
 
   transactions: Transaction[];
   goals: Goal[];
@@ -183,6 +184,9 @@ export default function DashboardClient({
   const [budget, setBudget] =
     useState(0);
 
+  const [savings, setSavings] =
+    useState(0);
+
   const [
     previousBalance,
     setPreviousBalance,
@@ -278,6 +282,10 @@ export default function DashboardClient({
       setGoals(data.goals);
 
       setBudget(data.budget);
+
+      setSavings(
+        Number(data.savings ?? 0),
+      );
     } catch (error) {
       console.error(error);
     } finally {
@@ -299,6 +307,7 @@ export default function DashboardClient({
    * saldo anterior
    * + ingresos del mes
    * - gastos del mes
+   * - ahorro del mes
    */
   const summary = useMemo(() => {
     const income = transactions
@@ -342,11 +351,13 @@ export default function DashboardClient({
     return {
       income,
       expense,
+      savings,
 
       balance:
         previousBalance +
         income -
-        expense,
+        expense -
+        savings,
 
       categories:
         Object.entries(
@@ -359,6 +370,7 @@ export default function DashboardClient({
   }, [
     transactions,
     previousBalance,
+    savings,
   ]);
 
   const donutBackground =
@@ -750,19 +762,16 @@ export default function DashboardClient({
       return;
     }
 
-    const updatedGoal =
-      (await response.json()) as Goal;
-
-    setGoals((current) =>
-      current.map((goal) =>
-        goal.id ===
-        updatedGoal.id
-          ? updatedGoal
-          : goal,
-      ),
-    );
-
     setContributionGoal(null);
+
+    /*
+     * Recargamos todo el resumen porque
+     * un abono modifica tanto la meta
+     * como el ahorro y el saldo disponible.
+     */
+    await loadFinance(
+      selectedMonth,
+    );
   }
 
   /*
@@ -899,6 +908,52 @@ export default function DashboardClient({
               Tus finanzas van por
               buen camino.
             </p>
+
+            <div className="mt-4 flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 shadow-sm lg:hidden">
+              <button
+                type="button"
+                aria-label="Mes anterior"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100"
+                onClick={() =>
+                  setSelectedMonth(
+                    (current) =>
+                      changeMonth(
+                        current,
+                        -1,
+                      ),
+                  )
+                }
+              >
+                <ChevronLeft
+                  size={17}
+                />
+              </button>
+
+              <span className="min-w-[140px] text-center text-sm font-semibold capitalize text-slate-700">
+                {formatMonth(
+                  selectedMonth,
+                )}
+              </span>
+
+              <button
+                type="button"
+                aria-label="Mes siguiente"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100"
+                onClick={() =>
+                  setSelectedMonth(
+                    (current) =>
+                      changeMonth(
+                        current,
+                        1,
+                      ),
+                  )
+                }
+              >
+                <ChevronRight
+                  size={17}
+                />
+              </button>
+            </div>
           </div>
 
           <button
@@ -953,7 +1008,7 @@ export default function DashboardClient({
                 ? `Saldo anterior: ${money(
                     previousBalance,
                   )}`
-                : "Ingresos menos gastos acumulados"}
+                : "Ingresos menos gastos y ahorro acumulados"}
             </p>
           </article>
 
@@ -1013,6 +1068,38 @@ export default function DashboardClient({
                   )
                 : 0}
               % de tus ingresos
+            </p>
+          </article>
+
+          <article className="metric-card">
+            <div className="card-top">
+              <span>
+                Ahorrado
+              </span>
+
+              <span className="icon-pill mint">
+                <PiggyBank
+                  size={19}
+                />
+              </span>
+            </div>
+
+            <strong>
+              {loading
+                ? "..."
+                : money(
+                    summary.savings,
+                  )}
+            </strong>
+
+            <p className="positive">
+              {summary.income
+                ? `${Math.round(
+                    (summary.savings /
+                      summary.income) *
+                      100,
+                  )}% de tus ingresos`
+                : "Ahorrado este mes"}
             </p>
           </article>
 

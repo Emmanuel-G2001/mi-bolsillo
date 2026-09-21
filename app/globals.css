@@ -1589,4 +1589,361 @@ a {
 
     border-radius: 22px;
   }
+
+  
+}
+
+/* =========================================
+   SUMMARY CARDS - COMPACTAS
+========================================= */
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: 1.15fr repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  align-items: stretch;
+
+  margin-top: 22px;
+  margin-bottom: 22px;
+}
+
+/* =========================
+   BASE DE LAS CARDS
+========================= */
+
+.balance-card,
+.metric-card {
+  min-width: 0;
+  min-height: 158px;
+
+  padding: 19px 20px;
+
+  border-radius: 20px;
+
+  display: flex;
+  flex-direction: column;
+
+  position: relative;
+}
+
+/* Cards blancas */
+
+.metric-card {
+  background: #ffffff;
+
+  border: 1px solid #e8ebf2;
+
+  box-shadow:
+    0 8px 24px rgba(35, 39, 72, 0.04);
+}
+
+/* Card saldo */
+
+.balance-card {
+  overflow: hidden;
+
+  color: #ffffff;
+
+  background: linear-gradient(
+    135deg,
+    #6758ff 0%,
+    #5947ed 100%
+  );
+
+  border: 0;
+
+  box-shadow:
+    0 13px 28px rgba(91, 71, 237, 0.2);
+}
+
+/* Decoración del saldo */
+
+.balance-card::before {
+  content: "";
+
+  position: absolute;
+
+  width: 150px;
+  height: 150px;
+
+  right: -72px;
+  bottom: -78px;
+
+  border-radius: 50%;
+
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.balance-card::after {
+  content: "";
+
+  position: absolute;
+
+  width: 105px;
+  height: 105px;
+
+  right: -47px;
+  bottom: -55px;
+
+  border-radius: 50%;
+
+  border: 23px solid rgba(255, 255, 255, 0.055);
+}
+
+/* =========================
+   CABECERA
+========================= */
+
+.summary-grid .card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 10px;
+
+  position: relative;
+  z-index: 2;
+}
+
+.summary-grid .card-top > span:first-child {
+  color: #6f778b;
+
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.balance-card .card-top > span:first-child {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* =========================
+   VALOR
+========================= */
+
+.summary-grid article > strong {
+  display: block;
+
+  margin-top: 18px;
+
+  color: #172033;
+
+  font-size: clamp(21px, 1.6vw, 26px);
+  font-weight: 750;
+
+  line-height: 1.05;
+
+  letter-spacing: -0.8px;
+
+  position: relative;
+  z-index: 2;
+
+  white-space: nowrap;
+}
+
+.balance-card > strong {
+  color: #ffffff !important;
+}
+
+/* =========================
+   TEXTO INFERIOR
+========================= */
+
+.summary-grid article > p {
+  margin-top: auto;
+  margin-bottom: 0;
+
+  padding-top: 15px;
+
+  min-height: 28px;
+
+  display: flex;
+  align-items: center;
+
+  gap: 5px;
+
+  color: #8b94a8;
+
+  font-size: 11px;
+  line-height: 1.35;
+
+  position: relative;
+  z-index: 2;
+}
+
+.balance-card > p {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.summary-grid article > p.positive {
+  color: #0c9e70;
+}
+
+/* =========================
+   ICONOS
+========================= */
+
+.summary-grid .icon-pill {
+  width: 36px;
+  height: 36px;
+
+  flex: 0 0 36px;
+
+  border-radius: 11px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-pill.white {
+  color: #ffffff;
+
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.icon-pill.mint {
+  color: #0da773;
+
+  background: #e8faf4;
+}
+
+.icon-pill.coral {
+  color: #ff6654;
+
+  background: #fff0ec;
+}
+
+/* =========================
+   PRESUPUESTO
+========================= */
+
+.metric-card .text-button {
+  padding: 0;
+
+  border: 0;
+
+  background: transparent;
+
+  color: #6758ff;
+
+  font-size: 11px;
+  font-weight: 700;
+
+  cursor: pointer;
+}
+
+.budget-progress {
+  margin-top: 11px;
+  margin-bottom: 4px;
+}
+
+.summary-grid .progress-track {
+  height: 6px;
+
+  border-radius: 999px;
+
+  overflow: hidden;
+
+  background: #eceafe;
+}
+
+.summary-grid .progress-track > div {
+  height: 100%;
+
+  border-radius: inherit;
+
+  background: #6758ff;
+}
+
+/* =========================================
+   TABLET
+========================================= */
+
+@media (max-width: 1050px) {
+  .summary-grid {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* =========================================
+   MOBILE
+========================================= */
+
+@media (max-width: 600px) {
+  .summary-grid {
+    grid-template-columns: 1fr 1fr;
+
+    gap: 10px;
+
+    margin-top: 18px;
+    margin-bottom: 18px;
+  }
+
+  /*
+   * El saldo ocupa todo el ancho.
+   */
+  .balance-card {
+    grid-column: 1 / -1;
+
+    min-height: 140px;
+  }
+
+  .balance-card,
+  .metric-card {
+    min-height: 132px;
+
+    padding: 16px;
+
+    border-radius: 17px;
+  }
+
+  .balance-card {
+    min-height: 140px;
+  }
+
+  .summary-grid article > strong {
+    margin-top: 14px;
+
+    font-size: 19px;
+
+    letter-spacing: -0.5px;
+
+    white-space: normal;
+  }
+
+  .summary-grid .card-top > span:first-child {
+    font-size: 11px;
+  }
+
+  .summary-grid article > p {
+    padding-top: 10px;
+
+    min-height: 23px;
+
+    font-size: 10px;
+  }
+
+  .summary-grid .icon-pill {
+    width: 31px;
+    height: 31px;
+
+    flex-basis: 31px;
+
+    border-radius: 9px;
+  }
+
+  /*
+   * Presupuesto ya NO ocupa
+   * toda una fila en móvil.
+   */
+  .summary-grid .metric-card:last-child {
+    grid-column: auto;
+
+    min-height: 132px;
+  }
+
+  .budget-progress {
+    margin-top: 8px;
+  }
 }

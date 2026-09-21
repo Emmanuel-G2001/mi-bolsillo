@@ -15,6 +15,13 @@
       "when": 1789933501442,
       "tag": "0001_tense_mantis",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790022981357,
+      "tag": "0002_youthful_queen_noir",
+      "breakpoints": true
     }
   ]
 }

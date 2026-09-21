@@ -140,6 +140,27 @@ export const savingsGoals = pgTable("savings_goals", {
     .notNull(),
 });
 
+export const savingsContributions = pgTable("savings_contributions", {
+  id: serial("id").primaryKey(),
+
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+
+  goalId: integer("goal_id").references(() => savingsGoals.id, {
+    onDelete: "set null",
+  }),
+
+  amount: numeric("amount", {
+    precision: 14,
+    scale: 2,
+  }).notNull(),
+
+  contributionDate: date("contribution_date").notNull(),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const monthlyBudgets = pgTable("monthly_budgets", {
   id: serial("id").primaryKey(),
 
