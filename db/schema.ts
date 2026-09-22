@@ -8,6 +8,7 @@ import {
   numeric,
   text,
   integer,
+  index,
 } from "drizzle-orm/pg-core";
 
 export const transactionTypeEnum = pgEnum("transaction_type", [
@@ -191,3 +192,51 @@ export const monthlyBudgets = pgTable("monthly_budgets", {
     .defaultNow()
     .notNull(),
 });
+
+export const authRateLimitEvents =
+  pgTable(
+    "auth_rate_limit_events",
+    {
+      id: serial("id")
+        .primaryKey(),
+
+      /*
+       * Nunca guardamos IP ni correo
+       * directamente.
+       *
+       * Guardamos un HMAC SHA-256.
+       */
+      keyHash: varchar(
+        "key_hash",
+        {
+          length: 64,
+        },
+      ).notNull(),
+
+      action: varchar(
+        "action",
+        {
+          length: 20,
+        },
+      ).notNull(),
+
+      createdAt: timestamp(
+        "created_at",
+        {
+          withTimezone: true,
+        },
+      )
+        .defaultNow()
+        .notNull(),
+    },
+
+    (table) => [
+      index(
+        "auth_rate_limit_lookup_idx",
+      ).on(
+        table.keyHash,
+        table.action,
+        table.createdAt,
+      ),
+    ],
+  );

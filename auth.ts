@@ -1,57 +1,120 @@
+import bcrypt from "bcryptjs";
+import {
+  eq,
+} from "drizzle-orm";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
-import { eq } from "drizzle-orm";
-import { z } from "zod";
 
-import { authConfig } from "./auth.config";
+import {
+  authConfig,
+} from "@/auth.config";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import {
+  users,
+} from "@/db/schema";
+import {
+  loginCredentialsSchema,
+} from "@/features/auth/auth.schema";
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-});
-
-export const { auth, signIn, signOut } = NextAuth({
+export const {
+  auth,
+  signIn,
+  signOut,
+} = NextAuth({
   ...authConfig,
 
   providers: [
     Credentials({
-      async authorize(credentials) {
-        const parsed = loginSchema.safeParse(credentials);
+      credentials: {
+        email: {
+          label:
+            "Correo",
+          type:
+            "email",
+        },
 
-        if (!parsed.success) {
+        password: {
+          label:
+            "Contraseña",
+          type:
+            "password",
+        },
+      },
+
+      async authorize(
+        credentials,
+      ) {
+        /*
+         * Validamos también
+         * del lado servidor.
+         */
+        const parsed =
+          loginCredentialsSchema
+            .safeParse(
+              credentials,
+            );
+
+        if (
+          !parsed.success
+        ) {
           return null;
         }
 
-        const { email, password } = parsed.data;
+        const email =
+          parsed.data.email
+            .toLowerCase();
 
-        const result = await db
-          .select()
-          .from(users)
-          .where(eq(users.email, email.toLowerCase()))
-          .limit(1);
+        const [user] =
+          await db
+            .select({
+              id:
+                users.id,
 
-        const user = result[0];
+              name:
+                users.name,
+
+              email:
+                users.email,
+
+              passwordHash:
+                users.passwordHash,
+            })
+            .from(users)
+            .where(
+              eq(
+                users.email,
+                email,
+              ),
+            )
+            .limit(1);
 
         if (!user) {
           return null;
         }
 
-        const passwordMatches = await bcrypt.compare(
-          password,
-          user.passwordHash,
-        );
+        const passwordMatches =
+          await bcrypt.compare(
+            parsed.data
+              .password,
+            user.passwordHash,
+          );
 
-        if (!passwordMatches) {
+        if (
+          !passwordMatches
+        ) {
           return null;
         }
 
         return {
-          id: String(user.id),
-          name: user.name,
-          email: user.email,
+          id: String(
+            user.id,
+          ),
+
+          name:
+            user.name,
+
+          email:
+            user.email,
         };
       },
     }),
