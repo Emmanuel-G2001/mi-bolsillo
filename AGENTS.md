@@ -42,11 +42,20 @@ El agente principal actúa como Coordinador. Recibe las solicitudes, delimita el
 1. **Especificación.** Antes de implementar una funcionalidad importante, prepara una especificación SDD (Spec-Driven Development) en `docs/specs/` con alcance, exclusiones, supuestos, casos límite y criterios de aceptación verificables. Aplica el flujo completo a cambios relevantes en comportamiento financiero, autenticación, API, datos o flujos principales. Para ajustes menores, registra un criterio de aceptación en la tarea.
 2. **Aprobación.** Confirma el alcance y los criterios acordados antes de implementar. Identifica los supuestos y consulta las dudas que cambien el alcance o la entrega. Pide aprobación explícita antes de cambios destructivos o de alto impacto.
 3. **Planificación.** Desglosa la especificación en tareas vinculadas a sus criterios, ordénalas por dependencia y acuerda los contratos compartidos. Asigna un responsable por archivo. Si dos agentes necesitan editar el mismo archivo, secuencia las ediciones.
-4. **Implementación.** Ejecuta las tareas según sus dependencias y respeta los requisitos acordados. Trabaja en paralelo cuando las tareas sean independientes y tengan archivos asignados distintos.
+4. **Implementación.** Antes de editar código, el Coordinador verifica Git y crea o valida la rama de trabajo según las reglas de abajo. Mantén toda la implementación de Backend y Frontend en esa rama. Ejecuta las tareas según sus dependencias y respeta los requisitos acordados. Trabaja en paralelo cuando las tareas sean independientes y tengan archivos asignados distintos.
 5. **QA.** Ejecuta las verificaciones pertinentes y vincula su evidencia con los criterios de aceptación. Reporta una prueba como aprobada únicamente si se ejecutó y su resultado lo confirma. Identifica las pruebas no ejecutadas, fallidas o bloqueadas.
 6. **Revisión de código.** Revisa la corrección, la mantenibilidad y los riesgos de regresión. El Coordinador asigna las correcciones y verifica los criterios afectados.
 7. **Seguridad.** Revisa amenazas y permisos durante la planificación cuando el cambio afecte a la autenticación, los datos sensibles o las dependencias. Antes de entregar, revisa los controles afectados en la implementación y verifica el aislamiento por usuario cuando corresponda.
-8. **Entrega.** El Coordinador supervisa calidad, seguridad y pruebas, contrasta los resultados con los criterios de aceptación y consolida los hallazgos. Informa qué se completó, qué evidencia lo verifica y qué sigue pendiente.
+8. **Entrega.** Antes de cerrar la tarea, el Coordinador ejecuta las verificaciones disponibles y solicita revisión a QA, Code Reviewer y Security cuando corresponda. Contrasta los resultados con los criterios de aceptación, consolida los hallazgos y propone commits pequeños, organizados y descriptivos. Informa qué se completó, qué evidencia lo verifica, qué sigue pendiente, qué rama creó o reutilizó y cuál es el estado de Git.
+
+### Gestión de ramas Git
+
+- Antes de implementar, verifica la rama activa, el estado de Git y los cambios locales preparados para commit, sin preparar y sin seguimiento. Comprueba qué commits locales contiene `main` y si incorpora la última versión de su rama remota, cuando exista.
+- Crea y activa automáticamente una rama específica para cada funcionalidad o corrección. Usa `feat/nombre-funcionalidad`, `fix/nombre-correccion`, `refactor/nombre-cambio` o `chore/nombre-tarea`, según corresponda. Para la corrección de consistencia financiera, usa `fix/financial-consistency`.
+- Parte de `main` actualizado siempre que puedas hacerlo sin sobrescribir ni perder cambios locales. Si hay trabajo sin commit, consérvalo y comprueba que crear o activar la rama no lo traslade accidentalmente. Usa un árbol de trabajo separado cuando permita aislar el trabajo de forma segura. Si la base o la propiedad de los cambios son ambiguas, escala la decisión antes de iniciar la implementación.
+- Si la rama ya existe, verifica su base, commits, estado y uso en otros árboles de trabajo. Reutilízala solo si corresponde a la misma tarea y es seguro hacerlo.
+- Trabaja siempre en la rama asignada durante la implementación. Nunca implementes directamente en `main`. No ejecutes `git reset --hard` ni `git clean -fd`, ni sobrescribas cambios existentes.
+- Pide autorización explícita del usuario antes de crear commits, hacer push, merge o rebase, o abrir un pull request.
 
 ### Roles previstos
 
