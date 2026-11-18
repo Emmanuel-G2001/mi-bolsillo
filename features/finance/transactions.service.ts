@@ -3,6 +3,7 @@ import "server-only";
 import {
   and,
   eq,
+  TransactionRollbackError,
 } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -12,8 +13,11 @@ import {
 
 import {
   getBogotaToday,
+  lockTransactionCategories,
   resolveCategory,
 } from "@/features/finance/finance.utils";
+
+import { formatMoneyCents } from "@/features/finance/finance.money";
 
 type TransactionType =
   | "income"
@@ -21,7 +25,7 @@ type TransactionType =
 
 type CreateTransactionInput = {
   description: string;
-  amount: number;
+  amount: bigint;
   type: TransactionType;
   category?: string;
   date?: string;
@@ -30,7 +34,7 @@ type CreateTransactionInput = {
 type UpdateTransactionInput = {
   id: number;
   description: string;
-  amount: number;
+  amount: bigint;
   type: TransactionType;
   category?: string;
   date: string;
@@ -41,184 +45,92 @@ export async function createTransaction(
   input: CreateTransactionInput,
 ) {
   const categoryName =
-    input.type === "income"
-      ? "Ingresos"
-      : input.category ??
-        "Otros";
+    input.type === "income" ? "Ingresos" : input.category ?? "Otros";
 
-  const category =
-    await resolveCategory(
-      userId,
-      input.type,
-      categoryName,
-    );
+  return db.transaction(async (tx) => {
+    await lockTransactionCategories(tx, userId, input.type);
+    const category = await resolveCategory(tx, userId, input.type, categoryName);
 
-  const [created] =
-    await db
-      .insert(
-        transactions,
-      )
+    const [created] = await tx.insert(transactions)
       .values({
         userId,
-
-        categoryId:
-          category.id,
-
-        type:
-          input.type,
-
-        description:
-          input.description,
-
-        amount:
-          input.amount.toFixed(
-            2,
-          ),
-
-        transactionDate:
-          input.date ??
-          getBogotaToday(),
+        categoryId: category.id,
+        type: input.type,
+        description: input.description,
+        amount: formatMoneyCents(input.amount),
+        transactionDate: input.date ?? getBogotaToday(),
       })
       .returning();
 
-  return {
-    id:
-      String(
-        created.id,
-      ),
-
-    description:
-      created.description,
-
-    amount:
-      Number(
-        created.amount,
-      ),
-
-    type:
-      created.type,
-
-    category:
-      categoryName,
-
-    date:
-      created.transactionDate,
-  };
+    return {
+      id: String(created.id),
+      description: created.description,
+      amount: Number(created.amount),
+      type: created.type,
+      category: categoryName,
+      date: created.transactionDate,
+    };
+  }, { isolationLevel: "read committed" });
 }
 
 export async function updateTransaction(
   userId: number,
   input: UpdateTransactionInput,
 ) {
-  const [existing] =
-    await db
-      .select({
-        id:
-          transactions.id,
-      })
-      .from(
-        transactions,
-      )
-      .where(
-        and(
-          eq(
-            transactions.id,
-            input.id,
-          ),
-
-          eq(
-            transactions.userId,
-            userId,
-          ),
-        ),
-      )
-      .limit(1);
-
-  if (!existing) {
-    return null;
-  }
-
   const categoryName =
-    input.type === "income"
-      ? "Ingresos"
-      : input.category ??
-        "Otros";
+    input.type === "income" ? "Ingresos" : input.category ?? "Otros";
+  const ownedTransaction = and(
+    eq(transactions.id, input.id),
+    eq(transactions.userId, userId),
+  );
 
-  const category =
-    await resolveCategory(
-      userId,
-      input.type,
-      categoryName,
-    );
+  try {
+    return await db.transaction(async (tx) => {
+      // Edits lock the destination category scope before the row. Deletes
+      // lock only the row, and creates never lock an existing movement.
+      await lockTransactionCategories(tx, userId, input.type);
+      const [existing] = await tx.select({ id: transactions.id })
+        .from(transactions)
+        .where(ownedTransaction)
+        .for("update");
 
-  const [updated] =
-    await db
-      .update(
-        transactions,
-      )
-      .set({
-        description:
-          input.description,
+      if (!existing) {
+        return null;
+      }
 
-        amount:
-          input.amount.toFixed(
-            2,
-          ),
+      const category = await resolveCategory(tx, userId, input.type, categoryName);
+      const [updated] = await tx.update(transactions)
+        .set({
+          description: input.description,
+          amount: formatMoneyCents(input.amount),
+          type: input.type,
+          categoryId: category.id,
+          transactionDate: input.date,
+          updatedAt: new Date(),
+        })
+        .where(ownedTransaction)
+        .returning();
 
-        type:
-          input.type,
+      if (!updated) {
+        tx.rollback();
+      }
 
-        categoryId:
-          category.id,
+      return {
+        id: String(updated.id),
+        description: updated.description,
+        amount: Number(updated.amount),
+        type: updated.type,
+        category: categoryName,
+        date: updated.transactionDate,
+      };
+    }, { isolationLevel: "read committed" });
+  } catch (error) {
+    if (error instanceof TransactionRollbackError) {
+      return null;
+    }
 
-        transactionDate:
-          input.date,
-
-        updatedAt:
-          new Date(),
-      })
-      .where(
-        and(
-          eq(
-            transactions.id,
-            input.id,
-          ),
-
-          eq(
-            transactions.userId,
-            userId,
-          ),
-        ),
-      )
-      .returning();
-
-  if (!updated) {
-    return null;
+    throw error;
   }
-
-  return {
-    id:
-      String(
-        updated.id,
-      ),
-
-    description:
-      updated.description,
-
-    amount:
-      Number(
-        updated.amount,
-      ),
-
-    type:
-      updated.type,
-
-    category:
-      categoryName,
-
-    date:
-      updated.transactionDate,
-  };
 }
 
 export async function deleteTransaction(

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { parseMoneyInput } from "@/features/finance/finance.money";
+
 /*
  * PostgreSQL numeric(14, 2)
  *
@@ -15,30 +17,37 @@ const MAX_MONEY =
  * =========================================================
  */
 
-const positiveMoneySchema =
-  z.coerce
-    .number()
-    .finite()
-    .positive(
-      "El valor debe ser mayor a cero.",
-    )
-    .max(
-      MAX_MONEY,
-      "El valor es demasiado grande.",
-    );
+const coercedMoneySchema = z.coerce
+  .number()
+  .finite()
+  .min(0, "El valor no puede ser negativo.")
+  .max(MAX_MONEY, "El valor es demasiado grande.");
 
-const nonNegativeMoneySchema =
-  z.coerce
-    .number()
-    .finite()
-    .min(
-      0,
-      "El valor no puede ser negativo.",
-    )
-    .max(
-      MAX_MONEY,
-      "El valor es demasiado grande.",
-    );
+function moneySchema(allowZero: boolean) {
+  return z.unknown().transform((input, context) => {
+    if (typeof input !== "number" && typeof input !== "string") {
+      context.addIssue({ code: "custom", message: "Importe inválido." });
+      return z.NEVER;
+    }
+
+    const parsed = coercedMoneySchema.safeParse(input);
+    if (!parsed.success) {
+      context.addIssue({ code: "custom", message: "Importe inválido." });
+      return z.NEVER;
+    }
+
+    const cents = parseMoneyInput(input, parsed.data, allowZero);
+    if (cents === null) {
+      context.addIssue({ code: "custom", message: "El valor debe ser de al menos un centavo." });
+      return z.NEVER;
+    }
+
+    return cents;
+  });
+}
+
+const positiveMoneySchema = moneySchema(false);
+const nonNegativeMoneySchema = moneySchema(true);
 
 const idSchema =
   z.coerce
@@ -216,7 +225,7 @@ export const createGoalSchema =
 
       current:
         nonNegativeMoneySchema
-          .default(0),
+          .default(BigInt(0)),
     })
     .strict();
 

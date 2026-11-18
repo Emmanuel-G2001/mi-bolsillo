@@ -1,0 +1,23 @@
+[features]
+multi_agent_v2 = true
+
+[agents.sdd]
+config_file = "agents/sdd.toml"
+
+[agents.planner]
+config_file = "agents/planner.toml"
+
+[agents.backend]
+config_file = "agents/backend.toml"
+
+[agents.frontend]
+config_file = "agents/frontend.toml"
+
+[agents.qa]
+config_file = "agents/qa.toml"
+
+[agents.code_reviewer]
+config_file = "agents/code_reviewer.toml"
+
+[agents.security]
+config_file = "agents/security.toml"

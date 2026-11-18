@@ -18,6 +18,11 @@ import {
 } from "@/features/finance/goals.service";
 
 import {
+  parseFinanceJson,
+  serializeFinanceDashboardJson,
+} from "@/features/finance/finance.money";
+
+import {
   financeDeleteQuerySchema,
   financeMonthQuerySchema,
   financePatchSchema,
@@ -44,7 +49,7 @@ async function readJson(
   request: NextRequest,
 ): Promise<unknown> {
   try {
-    return await request.json();
+    return parseFinanceJson(await request.text());
   } catch {
     return null;
   }
@@ -112,9 +117,9 @@ export async function GET(
       parsed.data.month,
     );
 
-  return NextResponse.json(
-    dashboard,
-  );
+  return new NextResponse(serializeFinanceDashboardJson(dashboard), {
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /*
@@ -410,6 +415,13 @@ export async function PATCH(
       body.amount,
       body.month,
     );
+
+  if (!result) {
+    return NextResponse.json(
+      { error: "Hay varios presupuestos registrados para este mes." },
+      { status: 400 },
+    );
+  }
 
   return NextResponse.json(
     result,
