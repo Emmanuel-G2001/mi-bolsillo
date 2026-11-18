@@ -4,6 +4,7 @@ import {
   type FormEvent,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -27,6 +28,13 @@ import {
   Zap,
 } from "lucide-react";
 
+import {
+  formatCopCents,
+  formatMoneyCents,
+  parseFinanceDashboardJson,
+  toMoneyCents,
+} from "@/features/finance/finance.money";
+
 type Transaction = {
   id: string;
   description: string;
@@ -47,13 +55,15 @@ type FinanceResponse = {
   userName: string;
   month: string;
 
-  previousBalance: number;
-  savings: number;
+  previousBalance: string;
+  savings: string;
 
   transactions: Transaction[];
   goals: Goal[];
   budget: number;
 };
+
+const emptyTransactions: Transaction[] = [];
 
 const categoryColors: Record<string, string> = {
   Vivienda: "#6d5dfc",
@@ -75,18 +85,19 @@ const expenseCategories = [
   "Otros",
 ];
 
-function money(value: number) {
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 0,
-  }).format(value);
+function money(value: number | bigint) {
+  return formatCopCents(typeof value === "bigint" ? value : toMoneyCents(value));
 }
 
-function shortMoney(value: number) {
-  return `$${new Intl.NumberFormat("es-CO", {
-    maximumFractionDigits: 0,
-  }).format(value)}`;
+function wholePercent(part: bigint, total: bigint) {
+  return total === BigInt(0)
+    ? "0"
+    : String((part * BigInt(100) + total / BigInt(2)) / total);
+}
+
+function chartPercent(part: bigint, total: bigint) {
+  if (total <= BigInt(0)) return "0";
+  return formatMoneyCents((part < total ? part : total) * BigInt(10000) / total);
 }
 
 function getBogotaMonth() {
@@ -175,33 +186,30 @@ export default function DashboardClient({
 }: {
   logoutAction: () => Promise<void>;
 }) {
-  const [transactions, setTransactions] =
-    useState<Transaction[]>([]);
+  const requestId = useRef(0);
+  const [financeRequest, setFinanceRequest] = useState(() => ({
+    id: 0,
+    month: getBogotaMonth(),
+  }));
+  const [finance, setFinance] = useState<FinanceResponse | null>(null);
+  const [financeStatus, setFinanceStatus] = useState<{
+    id: number;
+    error: string | null;
+  } | null>(null);
 
-  const [goals, setGoals] =
-    useState<Goal[]>([]);
-
-  const [budget, setBudget] =
-    useState(0);
-
-  const [savings, setSavings] =
-    useState(0);
-
-  const [
-    previousBalance,
-    setPreviousBalance,
-  ] = useState(0);
-
-  const [userName, setUserName] =
-    useState("");
-
-  const [
-    selectedMonth,
-    setSelectedMonth,
-  ] = useState(getBogotaMonth());
-
-  const [loading, setLoading] =
-    useState(true);
+  const { month: selectedMonth } = financeRequest;
+  const loading = financeStatus?.id !== financeRequest.id;
+  const financeError = loading ? null : financeStatus?.error;
+  const monthlyFinance = finance?.month === selectedMonth ? finance : null;
+  const transactions = monthlyFinance?.transactions ?? emptyTransactions;
+  const budget = monthlyFinance?.budget ?? 0;
+  const budgetCents = toMoneyCents(budget);
+  const savingsCents = toMoneyCents(monthlyFinance?.savings ?? "0");
+  const previousBalanceCents = toMoneyCents(
+    monthlyFinance?.previousBalance ?? "0",
+  );
+  const goals = finance?.goals ?? [];
+  const userName = finance?.userName;
 
   const [
     transactionOpen,
@@ -215,11 +223,17 @@ export default function DashboardClient({
     budgetOpen,
     setBudgetOpen,
   ] = useState(false);
+  const budgetSubmissionId = useRef(0);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
 
   const [
     contributionGoal,
     setContributionGoal,
   ] = useState<Goal | null>(null);
+
+  const remainingGoalCents = contributionGoal
+    ? toMoneyCents(contributionGoal.target) - toMoneyCents(contributionGoal.current)
+    : BigInt(0);
 
   const [
     editingTransaction,
@@ -240,64 +254,71 @@ export default function DashboardClient({
     "income" | "expense"
   >("expense");
 
-  async function loadFinance(
-    month: string,
-  ) {
-    setLoading(true);
-
-    try {
-      const response = await fetch(
-        `/api/finance?month=${encodeURIComponent(
-          month,
-        )}`,
-        {
-          cache: "no-store",
-        },
-      );
-
-      if (response.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(
-          "No fue posible cargar tus datos.",
-        );
-      }
-
-      const data =
-        (await response.json()) as FinanceResponse;
-
-      setUserName(data.userName);
-
-      setPreviousBalance(
-        data.previousBalance,
-      );
-
-      setTransactions(
-        data.transactions,
-      );
-
-      setGoals(data.goals);
-
-      setBudget(data.budget);
-
-      setSavings(
-        Number(data.savings ?? 0),
-      );
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
+  function requestFinance(direction = 0) {
+    if (direction) {
+      ++budgetSubmissionId.current;
+      setBudgetError(null);
     }
+
+    // Invalidate the old GET immediately, before the next effect runs.
+    const id = ++requestId.current;
+    setFinanceRequest((current) => ({
+      id,
+      month: direction ? changeMonth(current.month, direction) : current.month,
+    }));
   }
 
   useEffect(() => {
-    void loadFinance(
-      selectedMonth,
-    );
-  }, [selectedMonth]);
+    const { id, month } = financeRequest;
+    const controller = new AbortController();
+    const isCurrent = () =>
+      id === requestId.current && !controller.signal.aborted;
+
+    async function loadFinance() {
+      try {
+        const response = await fetch(
+          `/api/finance?month=${encodeURIComponent(month)}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
+
+        if (!isCurrent()) {
+          return;
+        }
+
+        if (response.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("No fue posible cargar tus datos.");
+        }
+
+        const data = parseFinanceDashboardJson(
+          await response.text(),
+        ) as FinanceResponse;
+        if (isCurrent()) {
+          setFinance(data);
+          setFinanceStatus({ id, error: null });
+        }
+      } catch {
+        if (isCurrent()) {
+          setFinanceStatus({
+            id,
+            error: "No fue posible cargar tus datos.",
+          });
+        }
+      }
+    }
+
+    if (isCurrent()) {
+      void loadFinance();
+    }
+    return () => controller.abort();
+  }, [financeRequest]);
 
   /*
    * RESUMEN DEL MES
@@ -310,67 +331,40 @@ export default function DashboardClient({
    * - ahorro del mes
    */
   const summary = useMemo(() => {
-    const income = transactions
-      .filter(
-        (item) =>
-          item.type === "income",
-      )
-      .reduce(
-        (total, item) =>
-          total + item.amount,
-        0,
-      );
+    const zero = BigInt(0);
+    let income = zero;
+    let expense = zero;
+    const categories = new Map<string, bigint>();
 
-    const expense = transactions
-      .filter(
-        (item) =>
-          item.type === "expense",
-      )
-      .reduce(
-        (total, item) =>
-          total + item.amount,
-        0,
-      );
+    for (const item of transactions) {
+      const amount = toMoneyCents(item.amount);
 
-    const categories = transactions
-      .filter(
-        (item) =>
-          item.type === "expense",
-      )
-      .reduce<Record<string, number>>(
-        (result, item) => {
-          result[item.category] =
-            (result[item.category] ||
-              0) + item.amount;
+      if (item.type === "income") {
+        income += amount;
+      } else {
+        expense += amount;
+        categories.set(item.category, (categories.get(item.category) ?? zero) + amount);
+      }
+    }
 
-          return result;
-        },
-        {},
-      );
+    const balance = previousBalanceCents + income - expense - savingsCents;
 
     return {
       income,
       expense,
-      savings,
-
-      balance:
-        previousBalance +
-        income -
-        expense -
-        savings,
-
-      categories:
-        Object.entries(
-          categories,
-        ).sort(
-          (a, b) =>
-            b[1] - a[1],
-        ),
+      savings: savingsCents,
+      balance,
+      remainingBudget: budgetCents > expense ? budgetCents - expense : BigInt(0),
+      categories: Array.from(categories).sort(([, a], [, b]) => {
+        if (a === b) return 0;
+        return a > b ? -1 : 1;
+      }),
     };
   }, [
+    budgetCents,
     transactions,
-    previousBalance,
-    savings,
+    previousBalanceCents,
+    savingsCents,
   ]);
 
   const donutBackground =
@@ -382,22 +376,16 @@ export default function DashboardClient({
         return "#eef0f4";
       }
 
-      let accumulated = 0;
+      let accumulated = BigInt(0);
 
       const sections =
         summary.categories.map(
           ([category, value]) => {
-            const start =
-              (accumulated /
-                summary.expense) *
-              100;
+            const start = chartPercent(accumulated, summary.expense);
 
             accumulated += value;
 
-            const end =
-              (accumulated /
-                summary.expense) *
-              100;
+            const end = chartPercent(accumulated, summary.expense);
 
             return `${
               categoryColors[
@@ -481,13 +469,12 @@ export default function DashboardClient({
       return;
     }
 
-    form.reset();
+    if (form.isConnected) {
+      form.reset();
+      setTransactionOpen(false);
+    }
 
-    setTransactionOpen(false);
-
-    await loadFinance(
-      selectedMonth,
-    );
+    requestFinance();
   }
 
   /*
@@ -579,18 +566,16 @@ export default function DashboardClient({
       return;
     }
 
-    setEditingTransaction(
-      null,
-    );
+    if (form.isConnected) {
+      setEditingTransaction(null);
+    }
 
     /*
      * Recargamos porque editar un
      * movimiento histórico puede cambiar
      * también el saldo acumulado.
      */
-    await loadFinance(
-      selectedMonth,
-    );
+    requestFinance();
   }
 
   /*
@@ -651,64 +636,64 @@ export default function DashboardClient({
       return;
     }
 
-    form.reset();
+    if (form.isConnected) {
+      form.reset();
+      setGoalOpen(false);
+    }
 
-    setGoalOpen(false);
-
-    await loadFinance(
-      selectedMonth,
-    );
+    requestFinance();
   }
 
   /*
    * PRESUPUESTO
    */
-  async function updateBudget(
-    event: FormEvent<HTMLFormElement>,
-  ) {
+  function closeBudget() {
+    ++budgetSubmissionId.current;
+    setBudgetOpen(false);
+  }
+
+  async function updateBudget(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const form =
-      event.currentTarget;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const amount = Number(data.get("amount"));
 
-    const data =
-      new FormData(form);
-
-    const amount = Number(
-      data.get("amount"),
-    );
-
-    if (
-      !Number.isFinite(amount) ||
-      amount <= 0
-    ) {
+    if (!Number.isFinite(amount) || amount <= 0) {
       return;
     }
 
-    const response = await fetch(
-      "/api/finance",
-      {
+    const submissionId = ++budgetSubmissionId.current;
+    const isCurrent = () =>
+      form.isConnected && submissionId === budgetSubmissionId.current;
+    const fallbackError = "No fue posible guardar el presupuesto.";
+    setBudgetError(null);
+
+    try {
+      const response = await fetch("/api/finance", {
         method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amount, month: selectedMonth }),
+      });
 
-        headers: {
-          "content-type":
-            "application/json",
-        },
+      if (!response.ok) {
+        const result = response.status === 400 ? await response.json() : null;
+        if (isCurrent()) {
+          setBudgetError(typeof result?.error === "string" ? result.error : fallbackError);
+        }
+        return;
+      }
 
-        body: JSON.stringify({
-          amount,
-          month: selectedMonth,
-        }),
-      },
-    );
+      if (isCurrent()) {
+        closeBudget();
+      }
 
-    if (!response.ok) {
-      return;
+      requestFinance();
+    } catch {
+      if (isCurrent()) {
+        setBudgetError(fallbackError);
+      }
     }
-
-    setBudget(amount);
-
-    setBudgetOpen(false);
   }
 
   /*
@@ -762,16 +747,16 @@ export default function DashboardClient({
       return;
     }
 
-    setContributionGoal(null);
+    if (form.isConnected) {
+      setContributionGoal(null);
+    }
 
     /*
      * Recargamos todo el resumen porque
      * un abono modifica tanto la meta
      * como el ahorro y el saldo disponible.
      */
-    await loadFinance(
-      selectedMonth,
-    );
+    requestFinance();
   }
 
   /*
@@ -801,9 +786,7 @@ export default function DashboardClient({
      * un movimiento antiguo puede alterar
      * el saldo acumulado.
      */
-    await loadFinance(
-      selectedMonth,
-    );
+    requestFinance();
   }
 
   const currentMonth =
@@ -836,13 +819,7 @@ export default function DashboardClient({
             type="button"
             aria-label="Mes anterior"
             onClick={() =>
-              setSelectedMonth(
-                (current) =>
-                  changeMonth(
-                    current,
-                    -1,
-                  ),
-              )
+              requestFinance(-1)
             }
           >
             <ChevronLeft
@@ -860,13 +837,7 @@ export default function DashboardClient({
             type="button"
             aria-label="Mes siguiente"
             onClick={() =>
-              setSelectedMonth(
-                (current) =>
-                  changeMonth(
-                    current,
-                    1,
-                  ),
-              )
+              requestFinance(1)
             }
           >
             <ChevronRight
@@ -915,13 +886,7 @@ export default function DashboardClient({
                 aria-label="Mes anterior"
                 className="flex h-8 w-8 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100"
                 onClick={() =>
-                  setSelectedMonth(
-                    (current) =>
-                      changeMonth(
-                        current,
-                        -1,
-                      ),
-                  )
+                  requestFinance(-1)
                 }
               >
                 <ChevronLeft
@@ -940,13 +905,7 @@ export default function DashboardClient({
                 aria-label="Mes siguiente"
                 className="flex h-8 w-8 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100"
                 onClick={() =>
-                  setSelectedMonth(
-                    (current) =>
-                      changeMonth(
-                        current,
-                        1,
-                      ),
-                  )
+                  requestFinance(1)
                 }
               >
                 <ChevronRight
@@ -975,6 +934,26 @@ export default function DashboardClient({
           </button>
         </section>
 
+        {financeError ? (
+          <div className="panel">
+            <p role="alert">
+              {monthlyFinance
+                ? financeError
+                : "Los datos de este mes no están disponibles."}
+            </p>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => requestFinance()}
+            >
+              Reintentar
+            </button>
+          </div>
+        ) : !monthlyFinance && (
+          <p className="subtle" role="status">Cargando los datos del mes…</p>
+        )}
+
+        <div hidden={!monthlyFinance}>
         {/* RESUMEN */}
 
         <section className="summary-grid">
@@ -1004,9 +983,9 @@ export default function DashboardClient({
                 size={15}
               />
 
-              {previousBalance !== 0
+              {previousBalanceCents !== BigInt(0)
                 ? `Saldo anterior: ${money(
-                    previousBalance,
+                    previousBalanceCents,
                   )}`
                 : "Ingresos menos gastos y ahorro acumulados"}
             </p>
@@ -1060,13 +1039,7 @@ export default function DashboardClient({
             </strong>
 
             <p>
-              {summary.income
-                ? Math.round(
-                    (summary.expense /
-                      summary.income) *
-                      100,
-                  )
-                : 0}
+              {wholePercent(summary.expense, summary.income)}
               % de tus ingresos
             </p>
           </article>
@@ -1094,11 +1067,7 @@ export default function DashboardClient({
 
             <p className="positive">
               {summary.income
-                ? `${Math.round(
-                    (summary.savings /
-                      summary.income) *
-                      100,
-                  )}% de tus ingresos`
+                ? `${wholePercent(summary.savings, summary.income)}% de tus ingresos`
                 : "Ahorrado este mes"}
             </p>
           </article>
@@ -1112,39 +1081,23 @@ export default function DashboardClient({
               <button
                 type="button"
                 className="text-button"
-                onClick={() =>
-                  setBudgetOpen(
-                    true,
-                  )
-                }
+                onClick={() => {
+                  setBudgetError(null);
+                  setBudgetOpen(true);
+                }}
               >
                 Editar
               </button>
             </div>
 
             <strong>
-              {money(
-                Math.max(
-                  budget -
-                    summary.expense,
-                  0,
-                ),
-              )}
+              {money(summary.remainingBudget)}
             </strong>
 
             <div className="progress-track budget-progress">
               <div
                 style={{
-                  width: `${
-                    budget
-                      ? Math.min(
-                          (summary.expense /
-                            budget) *
-                            100,
-                          100,
-                        )
-                      : 0
-                  }%`,
+                  width: `${chartPercent(summary.expense, budgetCents)}%`,
                 }}
               />
             </div>
@@ -1198,9 +1151,7 @@ export default function DashboardClient({
                     </span>
 
                     <strong>
-                      {shortMoney(
-                        summary.expense,
-                      )}
+                      {formatCopCents(summary.expense, "short")}
                     </strong>
                   </div>
                 </div>
@@ -1239,11 +1190,7 @@ export default function DashboardClient({
                         </strong>
 
                         <small>
-                          {Math.round(
-                            (value /
-                              summary.expense) *
-                              100,
-                          )}
+                          {wholePercent(value, summary.expense)}
                           %
                         </small>
                       </div>
@@ -1348,8 +1295,7 @@ export default function DashboardClient({
                             </span>
                           </p>
 
-                          {percent <
-                          100 ? (
+                          {goal.current < goal.target ? (
                             <button
                               type="button"
                               className="goal-contribute"
@@ -1556,6 +1502,7 @@ export default function DashboardClient({
           </div>
 
           {!loading &&
+            !financeError &&
             !transactions.length && (
               <div className="empty-state">
                 Tu lista está vacía.
@@ -1564,6 +1511,7 @@ export default function DashboardClient({
               </div>
             )}
         </section>
+        </div>
       </div>
 
       {/* MOBILE NAV */}
@@ -1721,8 +1669,8 @@ export default function DashboardClient({
                   <input
                     name="amount"
                     type="number"
-                    min="1"
-                    step="1"
+                    min="0.01"
+                    step="0.01"
                     placeholder="150000"
                     required
                   />
@@ -1900,8 +1848,8 @@ export default function DashboardClient({
                   <input
                     name="amount"
                     type="number"
-                    min="1"
-                    step="1"
+                    min="0.01"
+                    step="0.01"
                     defaultValue={
                       editingTransaction.amount
                     }
@@ -2048,8 +1996,8 @@ export default function DashboardClient({
                   <input
                     name="target"
                     type="number"
-                    min="1"
-                    step="1"
+                    min="0.01"
+                    step="0.01"
                     placeholder="5000000"
                     required
                   />
@@ -2070,7 +2018,7 @@ export default function DashboardClient({
                     name="current"
                     type="number"
                     min="0"
-                    step="1"
+                    step="0.01"
                     defaultValue="0"
                   />
                 </div>
@@ -2092,11 +2040,7 @@ export default function DashboardClient({
       {budgetOpen && (
         <div
           className="modal-backdrop"
-          onMouseDown={() =>
-            setBudgetOpen(
-              false,
-            )
-          }
+          onMouseDown={closeBudget}
         >
           <div
             className="finance-modal"
@@ -2124,17 +2068,14 @@ export default function DashboardClient({
 
               <button
                 type="button"
-                onClick={() =>
-                  setBudgetOpen(
-                    false,
-                  )
-                }
+                onClick={closeBudget}
               >
                 ×
               </button>
             </div>
 
             <form
+              key={selectedMonth}
               onSubmit={
                 updateBudget
               }
@@ -2153,13 +2094,11 @@ export default function DashboardClient({
                   <input
                     name="amount"
                     type="number"
-                    min="1"
-                    step="1"
+                    min="0.01"
+                    step="0.01"
                     defaultValue={
                       budget > 0
-                        ? Math.round(
-                            budget,
-                          )
+                        ? budget
                         : ""
                     }
                     placeholder="2000000"
@@ -2182,6 +2121,12 @@ export default function DashboardClient({
                     )}
                   </strong>
                 </div>
+              )}
+
+              {budgetError && (
+                <p className="text-sm text-red-700" role="alert">
+                  {budgetError}
+                </p>
               )}
 
               <button
@@ -2286,13 +2231,7 @@ export default function DashboardClient({
             <p className="remaining-goal">
               Te faltan{" "}
               <strong>
-                {money(
-                  Math.max(
-                    contributionGoal.target -
-                      contributionGoal.current,
-                    0,
-                  ),
-                )}
+                {money(remainingGoalCents)}
               </strong>
             </p>
 
@@ -2316,13 +2255,9 @@ export default function DashboardClient({
                   <input
                     name="amount"
                     type="number"
-                    min="1"
-                    max={Math.max(
-                      contributionGoal.target -
-                        contributionGoal.current,
-                      1,
-                    )}
-                    step="1"
+                    min="0.01"
+                    max={formatMoneyCents(remainingGoalCents)}
+                    step="0.01"
                     placeholder="500000"
                     autoFocus
                     required

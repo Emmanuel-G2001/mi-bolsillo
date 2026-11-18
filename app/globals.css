@@ -1737,7 +1737,7 @@ a {
   position: relative;
   z-index: 2;
 
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .balance-card > strong {

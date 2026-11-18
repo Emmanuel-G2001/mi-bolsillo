@@ -16,10 +16,16 @@ import {
   getBogotaToday,
 } from "@/features/finance/finance.utils";
 
+import {
+  formatMoneyCents,
+  moneyCentsToNumber,
+  toMoneyCents,
+} from "@/features/finance/finance.money";
+
 type CreateGoalInput = {
   name: string;
-  target: number;
-  current: number;
+  target: bigint;
+  current: bigint;
 };
 
 type ContributionResult =
@@ -51,10 +57,7 @@ export async function createGoal(
   input: CreateGoalInput,
 ) {
   const currentAmount =
-    Math.min(
-      input.current,
-      input.target,
-    );
+    input.current < input.target ? input.current : input.target;
 
   return db.transaction(
     async (tx) => {
@@ -70,14 +73,10 @@ export async function createGoal(
               input.name,
 
             targetAmount:
-              input.target.toFixed(
-                2,
-              ),
+              formatMoneyCents(input.target),
 
             currentAmount:
-              currentAmount.toFixed(
-                2,
-              ),
+              formatMoneyCents(currentAmount),
           })
           .returning();
 
@@ -91,7 +90,7 @@ export async function createGoal(
        * disponible.
        */
       if (
-        currentAmount > 0
+        currentAmount > BigInt(0)
       ) {
         await tx
           .insert(
@@ -104,9 +103,7 @@ export async function createGoal(
               created.id,
 
             amount:
-              currentAmount.toFixed(
-                2,
-              ),
+              formatMoneyCents(currentAmount),
 
             contributionDate:
               getBogotaToday(),
@@ -139,7 +136,7 @@ export async function createGoal(
 export async function contributeToGoal(
   userId: number,
   id: number,
-  contribution: number,
+  contribution: bigint,
 ): Promise<ContributionResult> {
   return db.transaction(
     async (tx) => {
@@ -162,7 +159,7 @@ export async function contributeToGoal(
               ),
             ),
           )
-          .limit(1);
+          .for("update");
 
       if (!goal) {
         return {
@@ -171,41 +168,18 @@ export async function contributeToGoal(
         };
       }
 
-      const current =
-        Number(
-          goal.currentAmount,
-        );
+      const current = toMoneyCents(goal.currentAmount);
+      const target = toMoneyCents(goal.targetAmount);
+      const remaining = target - current;
 
-      const target =
-        Number(
-          goal.targetAmount,
-        );
-
-      const remaining =
-        Math.max(
-          target -
-            current,
-          0,
-        );
-
-      if (
-        remaining <= 0
-      ) {
+      if (remaining <= BigInt(0)) {
         return {
-          status:
-            "completed",
+          status: "completed",
         };
       }
 
-      const appliedAmount =
-        Math.min(
-          contribution,
-          remaining,
-        );
-
-      const newCurrent =
-        current +
-        appliedAmount;
+      const appliedCents = contribution < remaining ? contribution : remaining;
+      const newCurrent = current + appliedCents;
 
       const [updated] =
         await tx
@@ -214,9 +188,7 @@ export async function contributeToGoal(
           )
           .set({
             currentAmount:
-              newCurrent.toFixed(
-                2,
-              ),
+              formatMoneyCents(newCurrent),
 
             updatedAt:
               new Date(),
@@ -247,9 +219,7 @@ export async function contributeToGoal(
             goal.id,
 
           amount:
-            appliedAmount.toFixed(
-              2,
-            ),
+            formatMoneyCents(appliedCents),
 
           contributionDate:
             getBogotaToday(),
@@ -259,7 +229,7 @@ export async function contributeToGoal(
         status:
           "ok",
 
-        appliedAmount,
+        appliedAmount: moneyCentsToNumber(appliedCents),
 
         goal: {
           id:
@@ -282,6 +252,7 @@ export async function contributeToGoal(
         },
       };
     },
+    { isolationLevel: "read committed" },
   );
 }
 
@@ -313,7 +284,7 @@ export async function deleteGoal(
               ),
             ),
           )
-          .limit(1);
+          .for("update");
 
       if (!goal) {
         return false;
@@ -364,5 +335,6 @@ export async function deleteGoal(
 
       return true;
     },
+    { isolationLevel: "read committed" },
   );
 }
