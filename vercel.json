@@ -1,7 +1,8 @@
 {
   "git": {
     "deploymentEnabled": {
-      "fix/financial-consistency": false
+      "fix/financial-consistency": false,
+      "feat/financial-intelligence": false
     }
   }
 }
