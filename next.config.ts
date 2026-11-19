@@ -50,6 +50,10 @@ const nextConfig:
         headers:
           securityHeaders,
       },
+      {
+        source: "/api/finance/reports/analytics",
+        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      },
     ];
   },
 };

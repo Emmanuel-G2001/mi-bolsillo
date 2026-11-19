@@ -1,13 +1,19 @@
-// QA externo A1–A3. Requiere Node 22.15+ y PostgreSQL 16 local desechable.
-// Configura DATABASE_URL con loopback y una base vacía `mi_bolsillo_qa`,
-// aplica las migraciones existentes con `pnpm exec drizzle-kit migrate` y ejecuta:
+// QA de A1–A3, I3-04 y MA-01–MA-03. Requiere Node 22.15+ y PostgreSQL 16 local desechable.
+// Configura DATABASE_URL con loopback y la base `mi_bolsillo_qa` con el esquema disponible.
+// Ejecuta desde la raíz del repositorio:
 // node --import tsx scripts/financial-consistency-postgres-check.ts
 // Este script crea y elimina únicamente sus propios usuarios sintéticos.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import * as nodeModule from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import ExcelJS from "exceljs";
 import { Pool } from "pg";
+import { parseAnalyticsQuery } from "../features/finance/analytics/analytics.schema";
+import { buildAnalyticsReport } from "../features/finance/reports/report.types";
+import { renderReportXlsx } from "../features/finance/reports/report.xlsx";
 
 let stage = "configuración y conexión";
 
@@ -179,6 +185,104 @@ async function main() {
     }
 
     console.log("A1–A3: concurrencia, aislamiento, rollback y borrado verificados.");
+
+    stage = "MA-01–MA-03: progreso inicial, aportes y devolución";
+    const { getFinanceAnalytics, readAnalyticsReportMovements, readFinanceAnalytics } =
+      await import("../features/finance/analytics/analytics.service");
+    const { createGoal, contributeToGoal, deleteGoal } = await import("../features/finance/goals.service");
+    const { getBogotaToday } = await import("../features/finance/finance.utils");
+    const today = getBogotaToday();
+    const month = today.slice(0, 7);
+    const goalQuery = parseAnalyticsQuery(new URLSearchParams({ startMonth: month, endMonth: month }));
+    assert.ok(goalQuery);
+    await pool.query(
+      `INSERT INTO transactions (user_id, type, description, amount, transaction_date)
+       VALUES ($1, 'income', 'Disponible QA', 50.00, $2)`,
+      [other.id, today],
+    );
+    const baseline = await getFinanceAnalytics(other.id, goalQuery);
+    assert.ok(baseline);
+    assert.equal(baseline.series[0].available, "50.00");
+    assert.equal(baseline.series[0].savings, "0.00");
+    const goal = await createGoal(other.id, { name: "Meta QA", target: BigInt(10000), current: BigInt(1234) });
+    assert.equal(goal.current, 12.34);
+    const goalId = Number(goal.id);
+    const contributions = () => pool.query<{ amount: string }>(
+      "SELECT amount::text FROM savings_contributions WHERE goal_id = $1 ORDER BY id",
+      [goalId],
+    );
+    assert.deepEqual((await contributions()).rows, []);
+    assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), baseline);
+    assert.deepEqual(await contributeToGoal(owner.id, goalId, BigInt(567)), { status: "not_found" });
+    assert.equal(await deleteGoal(owner.id, goalId), false);
+    const contributed = await contributeToGoal(other.id, goalId, BigInt(567));
+    assert.equal(contributed.status, "ok");
+    assert.equal(contributed.goal.current, 18.01);
+    assert.equal(contributed.appliedAmount, 5.67);
+    assert.deepEqual((await contributions()).rows, [{ amount: "5.67" }]);
+    const afterContribution = await getFinanceAnalytics(other.id, goalQuery);
+    assert.ok(afterContribution);
+    assert.deepEqual(afterContribution.series[0], {
+      ...baseline.series[0],
+      available: "44.33",
+      savings: "5.67",
+    });
+    assert.equal(await deleteGoal(other.id, goalId), true);
+    assert.deepEqual((await contributions()).rows, []);
+    assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), baseline);
+
+    const almostComplete = await createGoal(other.id, {
+      name: "Meta concurrente QA", target: BigInt(10000), current: BigInt(9899),
+    });
+    const concurrentId = Number(almostComplete.id);
+    const results = await Promise.all([
+      contributeToGoal(other.id, concurrentId, BigInt(100)),
+      contributeToGoal(other.id, concurrentId, BigInt(100)),
+    ]);
+    assert.deepEqual(results.map((result) => {
+      assert.equal(result.status, "ok");
+      return result.appliedAmount;
+    }).sort((first, second) => first - second), [0.01, 1]);
+    const capped = await getFinanceAnalytics(other.id, goalQuery);
+    assert.ok(capped);
+    assert.equal(capped.series[0].savings, "1.01");
+    assert.equal(capped.series[0].available, "48.99");
+    assert.equal(await deleteGoal(other.id, concurrentId), true);
+    assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), baseline);
+    console.log("MA-01–MA-03: progreso inicial, saldo, aportes y aislamiento verificados.");
+
+    stage = "I3-04: fechas civiles en el archivo XLSX";
+    await pool.query(
+      `INSERT INTO transactions (user_id, type, description, amount, transaction_date)
+       VALUES ($1, 'income', 'Día anterior', 0.01, DATE '2024-02-28'),
+              ($1, 'income', 'Día bisiesto', 0.02, DATE '2024-02-29'),
+              ($1, 'expense', 'Mes siguiente', 0.03, DATE '2024-03-01'),
+              ($2, 'income', 'Movimiento ajeno', 0.04, DATE '2024-02-29')`,
+      [owner.id, other.id],
+    );
+    const query = parseAnalyticsQuery(new URLSearchParams({ startMonth: "2024-02", endMonth: "2024-03" }));
+    assert.ok(query);
+    for (const dateStyle of ["ISO, MDY", "SQL, DMY", "German, DMY"]) {
+      const report = await drizzle(pool).transaction(async (tx) => {
+        await tx.execute(sql`select set_config('DateStyle', ${dateStyle}, true)`);
+        await tx.execute(sql`select set_config('TimeZone', 'America/Bogota', true)`);
+        const analytics = await readFinanceAnalytics(tx, owner.id, query);
+        assert.ok(analytics);
+        const movements = await readAnalyticsReportMovements(tx, owner.id, query, 10);
+        return buildAnalyticsReport(analytics, movements, new Date("2024-03-02T02:00:00Z"));
+      }, { isolationLevel: "repeatable read", accessMode: "read only" });
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(Uint8Array.from(await renderReportXlsx(report)).buffer);
+      const sheet = workbook.getWorksheet("Movimientos");
+      assert.ok(sheet);
+      assert.equal(sheet.rowCount, 4, dateStyle);
+      assert.deepEqual(
+        [2, 3, 4].map((row) => sheet.getCell(row, 1).value),
+        ["2024-03-01", "2024-02-29", "2024-02-28"],
+        dateStyle,
+      );
+    }
+    console.log("I3-04: fechas civiles ISO verificadas en XLSX con DateStyle ISO, SQL y German.");
   } finally {
     await pool.query("DELETE FROM users WHERE email = ANY($1::text[])", [emails]).finally(() => pool.end());
   }

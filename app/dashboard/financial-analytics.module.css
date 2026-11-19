@@ -1,0 +1,237 @@
+.panel {
+  margin-top: 1rem;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.controls label,
+.metricControl {
+  display: grid;
+  min-width: 0;
+  gap: 0.3rem;
+  color: #4b5567;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.controls input,
+.controls select,
+.metricControl select,
+.button {
+  min-height: 2.75rem;
+  border: 1px solid #c8cfdf;
+  border-radius: 0.7rem;
+  background: #fff;
+  color: #172033;
+  padding: 0.4rem 0.7rem;
+}
+
+.controls input,
+.controls select,
+.metricControl select {
+  min-width: 0;
+  width: 100%;
+  font-weight: 400;
+}
+
+.button {
+  background: #f4f3ff;
+  color: #4336ad;
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: #ebe8ff;
+}
+
+.button[aria-disabled="true"] {
+  background: #f3f4f7;
+  color: #4b5567;
+  cursor: wait;
+}
+
+.primary,
+.primary:hover {
+  background: #4e40c5;
+  border-color: #4e40c5;
+  color: #fff;
+}
+
+.panel :is(button, input, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid #4336ad;
+  outline-offset: 2px;
+}
+
+.period,
+.note {
+  color: #4b5567;
+  font-size: 0.875rem;
+  margin-block: 0.75rem;
+}
+
+.error {
+  color: #a42032;
+}
+
+.results {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.scope {
+  display: grid;
+  gap: 0.25rem;
+  background: #f3f1ff;
+  border-radius: 0.75rem;
+  color: #37316a;
+  padding: 0.75rem;
+  font-size: 0.875rem;
+}
+
+.card {
+  min-width: 0;
+  padding: clamp(0.7rem, 2vw, 1rem);
+  border: 1px solid #e2e6ef;
+  border-radius: 0.85rem;
+}
+
+.card h3 {
+  font-weight: 700;
+}
+
+.chartHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.chart {
+  display: grid;
+  gap: 0.45rem;
+  margin-block: 0.75rem;
+}
+
+.chartRow {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr) minmax(6rem, auto);
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.chartRow strong {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.track,
+.shareTrack {
+  display: flex;
+  min-height: 0.6rem;
+  overflow: hidden;
+  border-radius: 0.3rem;
+  background: #edeafa;
+}
+
+.half {
+  display: flex;
+  flex: 1;
+}
+
+.negativeSide {
+  justify-content: flex-end;
+  border-right: 1px solid #6b637e;
+}
+
+.bar,
+.negativeBar {
+  display: block;
+  background: #5947d5;
+}
+
+.negativeBar {
+  background: #ad3f60;
+}
+
+.shareTrack {
+  margin-top: 0.2rem;
+  min-width: 4rem;
+}
+
+.details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #4336ad;
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+.tableRegion {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-top: 0.5rem;
+}
+
+.table {
+  width: 100%;
+  text-align: left;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid #e2e6ef;
+  white-space: nowrap;
+}
+
+.table th:first-child {
+  min-width: 6rem;
+  max-width: 16rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.table :is(th, td):not(:first-child) {
+  text-align: right;
+}
+
+.table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+@media (max-width: 32rem) {
+  .chartRow {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+    row-gap: 0.2rem;
+  }
+
+  .chartRow strong {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .track {
+    grid-column: 1 / -1;
+  }
+}

@@ -2,6 +2,7 @@
 
 import {
   type FormEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -34,6 +35,9 @@ import {
   parseFinanceDashboardJson,
   toMoneyCents,
 } from "@/features/finance/finance.money";
+
+import FinancialAnalytics from "./financial-analytics";
+import MonthlyInsights from "./monthly-insights";
 
 type Transaction = {
   id: string;
@@ -187,6 +191,13 @@ export default function DashboardClient({
   logoutAction: () => Promise<void>;
 }) {
   const requestId = useRef(0);
+  const isCurrentRequest = useCallback((id: number) => id === requestId.current, []);
+  const analyticsMutationId = useRef(0);
+  const [analyticsMutation, setAnalyticsMutation] = useState(0);
+  const isCurrentAnalyticsMutation = useCallback(
+    (id: number) => id === analyticsMutationId.current,
+    [],
+  );
   const [financeRequest, setFinanceRequest] = useState(() => ({
     id: 0,
     month: getBogotaMonth(),
@@ -268,11 +279,16 @@ export default function DashboardClient({
     }));
   }
 
+  function refreshAfterMutation() {
+    setAnalyticsMutation(++analyticsMutationId.current);
+    requestFinance();
+  }
+
   useEffect(() => {
     const { id, month } = financeRequest;
     const controller = new AbortController();
     const isCurrent = () =>
-      id === requestId.current && !controller.signal.aborted;
+      isCurrentRequest(id) && !controller.signal.aborted;
 
     async function loadFinance() {
       try {
@@ -318,7 +334,7 @@ export default function DashboardClient({
       void loadFinance();
     }
     return () => controller.abort();
-  }, [financeRequest]);
+  }, [financeRequest, isCurrentRequest]);
 
   /*
    * RESUMEN DEL MES
@@ -474,7 +490,7 @@ export default function DashboardClient({
       setTransactionOpen(false);
     }
 
-    requestFinance();
+    refreshAfterMutation();
   }
 
   /*
@@ -575,7 +591,7 @@ export default function DashboardClient({
      * movimiento histórico puede cambiar
      * también el saldo acumulado.
      */
-    requestFinance();
+    refreshAfterMutation();
   }
 
   /*
@@ -641,7 +657,7 @@ export default function DashboardClient({
       setGoalOpen(false);
     }
 
-    requestFinance();
+    refreshAfterMutation();
   }
 
   /*
@@ -688,7 +704,7 @@ export default function DashboardClient({
         closeBudget();
       }
 
-      requestFinance();
+      refreshAfterMutation();
     } catch {
       if (isCurrent()) {
         setBudgetError(fallbackError);
@@ -756,7 +772,7 @@ export default function DashboardClient({
      * un abono modifica tanto la meta
      * como el ahorro y el saldo disponible.
      */
-    requestFinance();
+    refreshAfterMutation();
   }
 
   /*
@@ -786,7 +802,7 @@ export default function DashboardClient({
      * un movimiento antiguo puede alterar
      * el saldo acumulado.
      */
-    requestFinance();
+    refreshAfterMutation();
   }
 
   const currentMonth =
@@ -933,6 +949,12 @@ export default function DashboardClient({
             </span>
           </button>
         </section>
+
+        <MonthlyInsights
+          request={financeRequest}
+          isCurrentRequest={isCurrentRequest}
+          onRetry={requestFinance}
+        />
 
         {financeError ? (
           <div className="panel">
@@ -1512,6 +1534,12 @@ export default function DashboardClient({
             )}
         </section>
         </div>
+
+        <FinancialAnalytics
+          initialMonth={selectedMonth}
+          mutationId={analyticsMutation}
+          isCurrentMutation={isCurrentAnalyticsMutation}
+        />
       </div>
 
       {/* MOBILE NAV */}
@@ -2006,7 +2034,7 @@ export default function DashboardClient({
 
               <label>
                 <span>
-                  Ya tengo
+                  Dinero que ya tienes ahorrado
                 </span>
 
                 <div className="money-input">
@@ -2020,9 +2048,15 @@ export default function DashboardClient({
                     min="0"
                     step="0.01"
                     defaultValue="0"
+                    aria-describedby="new-goal-initial-savings-help"
                   />
                 </div>
               </label>
+
+              <p id="new-goal-initial-savings-help" className="-mt-2 text-sm text-slate-600">
+                Este dinero suma al progreso de la meta sin descontarse de tu saldo disponible.
+                Los aportes que hagas después sí se descuentan.
+              </p>
 
               <button
                 type="submit"
