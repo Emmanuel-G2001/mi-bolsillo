@@ -2034,7 +2034,7 @@ export default function DashboardClient({
 
               <label>
                 <span>
-                  Ya tengo
+                  Dinero que ya tienes ahorrado
                 </span>
 
                 <div className="money-input">
@@ -2048,9 +2048,15 @@ export default function DashboardClient({
                     min="0"
                     step="0.01"
                     defaultValue="0"
+                    aria-describedby="new-goal-initial-savings-help"
                   />
                 </div>
               </label>
+
+              <p id="new-goal-initial-savings-help" className="-mt-2 text-sm text-slate-600">
+                Este dinero suma al progreso de la meta sin descontarse de tu saldo disponible.
+                Los aportes que hagas después sí se descuentan.
+              </p>
 
               <button
                 type="submit"

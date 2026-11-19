@@ -56,81 +56,23 @@ export async function createGoal(
   userId: number,
   input: CreateGoalInput,
 ) {
-  const currentAmount =
+  const initialSavings =
     input.current < input.target ? input.current : input.target;
 
-  return db.transaction(
-    async (tx) => {
-      const [created] =
-        await tx
-          .insert(
-            savingsGoals,
-          )
-          .values({
-            userId,
+  // El dinero previamente ahorrado cuenta únicamente para el progreso de la meta.
+  const [created] = await db.insert(savingsGoals).values({
+    userId,
+    name: input.name,
+    targetAmount: formatMoneyCents(input.target),
+    currentAmount: formatMoneyCents(initialSavings),
+  }).returning();
 
-            name:
-              input.name,
-
-            targetAmount:
-              formatMoneyCents(input.target),
-
-            currentAmount:
-              formatMoneyCents(currentAmount),
-          })
-          .returning();
-
-      /*
-       * Si el usuario indica que ya
-       * tiene dinero ahorrado al crear
-       * la meta, también registramos
-       * ese dinero como ahorro.
-       *
-       * Así sí disminuye el saldo
-       * disponible.
-       */
-      if (
-        currentAmount > BigInt(0)
-      ) {
-        await tx
-          .insert(
-            savingsContributions,
-          )
-          .values({
-            userId,
-
-            goalId:
-              created.id,
-
-            amount:
-              formatMoneyCents(currentAmount),
-
-            contributionDate:
-              getBogotaToday(),
-          });
-      }
-
-      return {
-        id:
-          String(
-            created.id,
-          ),
-
-        name:
-          created.name,
-
-        current:
-          Number(
-            created.currentAmount,
-          ),
-
-        target:
-          Number(
-            created.targetAmount,
-          ),
-      };
-    },
-  );
+  return {
+    id: String(created.id),
+    name: created.name,
+    current: Number(created.currentAmount),
+    target: Number(created.targetAmount),
+  };
 }
 
 export async function contributeToGoal(
