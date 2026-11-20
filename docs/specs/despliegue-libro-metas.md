@@ -33,3 +33,12 @@ Antes de producción, ensayar una pausa de escrituras desde infraestructura y di
 - **Diario con operaciones:** desactivar escrituras de metas y mantener una versión que lea el diario. Corregir hacia adelante o diseñar recuperación y conciliación con preservación y replay verificable de operaciones confirmadas. Restaurar un respaldo anterior sobre el destino activo podría perder operaciones y requiere autorización separada. No borrar el diario ni volver a una versión que lo ignore.
 
 La conciliación individual queda fuera de esta ventana. Seguir el [procedimiento y lista de evidencias](conciliacion-individual-metas.md) únicamente con autorización específica.
+
+## Control previo al merge para evitar un despliegue prematuro
+
+1. Un operador autorizado abre Vercel → Project Settings → Git. Confirma el repositorio conectado y la rama de producción, e identifica integraciones adicionales. Registra el estado efectivo, el operador y la hora. La exclusión de la rama del PR solo afecta su vista previa.
+2. Acordar y aplicar un bloqueo efectivo del disparador Git de `main` antes de fusionar. Puede usarse una pausa aprobada de la integración del proyecto o una regla explícita de `main` cuya evaluación se haya comprobado. Antes de cambiar la configuración, revisar si el propio cambio pone en cola un despliegue. Ensayar el mecanismo en un proyecto aislado y verificar en el proyecto aprobado que no haya despliegues activos o en cola.
+3. Inventariar, detener y comprobar por separado los deploy hooks, GitHub Actions, CI/CD externo y llamadas programadas. Un bloqueo del disparador Git no cubre esas vías. Conservar evidencia de controles efectivos y ventana autorizada. La falta de acceso o evidencia bloquea el merge.
+4. Con artefacto lector disponible, ensayar drenaje de roles y pools, restaurar un respaldo en una base aislada nueva y verificar el historial Drizzle, recuentos, restricciones, triggers y saldos. Exigir un corte aprobado antes de reactivar cualquier disparador.
+
+La configuración efectiva del proyecto Vercel y sus integraciones externas siguen pendientes de verificación por un operador autorizado. En esta revisión no se modificó la configuración ni se activó ningún despliegue.

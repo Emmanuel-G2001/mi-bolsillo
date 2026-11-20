@@ -125,6 +125,27 @@ async function hasUnverifiedLegacyEntries(tx: Tx, userId: number, goalId: number
   return result.rows.length > 0;
 }
 
+async function hasReserveDebit(tx: Tx, userId: number, goalId: number) {
+  const result = await tx.execute(sql`
+    select 1
+    from savings_goal_operations operation
+    left join savings_goal_operations original
+      on operation.kind = 'reverse'
+      and original.user_id = operation.user_id
+      and original.operation_id = operation.original_operation_id
+    where operation.user_id = ${userId}
+      and (
+        (operation.goal_id = ${goalId} and operation.kind in ('release', 'transfer'))
+        or (operation.kind = 'reverse' and (
+          (operation.goal_id = ${goalId} and original.kind = 'fund')
+          or (operation.destination_goal_id = ${goalId} and original.kind = 'transfer')
+        ))
+      )
+    limit 1
+  `);
+  return result.rows.length > 0;
+}
+
 function validateMovement(goal: Goal, reserved: bigint, delta: bigint) {
   if (status(goal) !== "active") conflict("Restaura la meta antes de mover fondos.");
   if (reserved + delta < zero) conflict("La meta no tiene suficientes fondos reservados.");
@@ -203,6 +224,14 @@ export async function writeGoalOperation(
     const source = locked.find(goal => goal.id === input.goalId);
     const target = locked.find(goal => goal.id === destinationId);
     if (!source || (destinationId && !target)) notFound();
+
+    // The ledger does not assign debits to credits or establish causal order.
+    // Any debit makes the original credit's remaining provenance uncertain.
+    const debitedGoalId = original?.kind === "fund" ? source.id
+      : original?.kind === "transfer" ? target?.id : undefined;
+    if (debitedGoalId !== undefined && await hasReserveDebit(tx, userId, debitedGoalId)) {
+      conflict("No se puede verificar que los fondos del asiento original sigan reservados.");
+    }
 
     const balances = await reserves(tx, userId, goalIds);
     const sourceReserve = balances.get(source.id) ?? zero;

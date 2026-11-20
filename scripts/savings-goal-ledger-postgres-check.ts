@@ -1,5 +1,6 @@
 // Run against the disposable migrated PostgreSQL QA database. The journal
 // deliberately keeps the synthetic records. Dispose of the database afterward.
+// Set SAVINGS_LEDGER_SKIP_HISTORICAL=1 to omit synthetic reclassification.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import * as nodeModule from "node:module";
@@ -8,6 +9,7 @@ import ExcelJS from "exceljs";
 import { Pool } from "pg";
 
 import { parseAnalyticsQuery } from "../features/finance/analytics/analytics.schema";
+import { toMoneyCents } from "../features/finance/finance.money";
 import { getBogotaToday } from "../features/finance/finance.utils";
 import { parseMovementMonth } from "../features/finance/monthly-movements";
 
@@ -170,6 +172,151 @@ async function main() {
     assert.equal((await read(target)).goal.reserved, "0.04");
     assert.equal((await read(opposite)).goal.reserved, "0.04");
     assert.deepEqual(await balance(), beforeOpposite);
+
+    // SM-05: a replenished aggregate reserve does not establish provenance.
+    const snapshot = async (goalIds: number[]) => ({
+      analytics: await balance(),
+      dashboard: await getFinanceDashboard({ id: owner.id, name: "QA" }, month),
+      csv: await getMonthlyMovementExportRows(owner.id, period),
+      ledger: await Promise.all(goalIds.map(read)),
+    });
+    const rejectWithoutEffects = async (
+      operation: () => Promise<unknown>, goalIds: number[], status = 409,
+    ) => {
+      const before = await snapshot(goalIds);
+      await assert.rejects(operation, rejectsWith(status));
+      assert.deepEqual(await snapshot(goalIds), before);
+    };
+    const undo = (goalId: number, originalOperationId: string) =>
+      ({ kind: "reverse", goalId, originalOperationId, operationId: randomUUID() } as const);
+    const clean = await makeGoal("Reserva sin consumo QA", "50000");
+    const cleanFund = await perform({ kind: "fund", goalId: clean, amount: BigInt(10001) });
+    const laterFund = await perform({ kind: "fund", goalId: clean, amount: BigInt(12003) });
+    const cleanUndo = undo(clean, cleanFund.operationId);
+    await rejectWithoutEffects(() => writeGoalOperation(other.id, cleanUndo), [clean], 404);
+    const undone = await writeGoalOperation(owner.id, cleanUndo);
+    assert.equal(undone.goal.reserved, "120.03");
+    assert.equal(undone.goal.current, "120.03");
+    const afterUndo = await snapshot([clean]);
+    assert.deepEqual(await writeGoalOperation(owner.id, cleanUndo), undone);
+    assert.deepEqual(await snapshot([clean]), afterUndo);
+    await rejectWithoutEffects(
+      () => writeGoalOperation(owner.id, { ...cleanUndo, reason: "Otro contenido QA" }), [clean],
+    );
+    await rejectWithoutEffects(
+      () => writeGoalOperation(owner.id, undo(clean, laterFund.operationId)), [clean],
+    );
+    const ownerAfterReversal = await snapshot([clean]);
+    const otherResult = await writeGoalOperation(other.id, {
+      kind: "fund", goalId: foreign, amount: BigInt(201), operationId: cleanUndo.operationId,
+    });
+    assert.equal(otherResult.goal.reserved, "2.01");
+    assert.deepEqual(await snapshot([clean]), ownerAfterReversal);
+
+    for (const consumed of [BigInt(10000), BigInt(1)]) {
+      const goal = await makeGoal("Aporte consumido QA", "50000");
+      const originalFund = await perform({ kind: "fund", goalId: goal, amount: BigInt(10000) });
+      const release = await perform({ kind: "release", goalId: goal, amount: consumed });
+      await perform({ kind: "fund", goalId: goal, amount: BigInt(10000) });
+      await rejectWithoutEffects(() => writeGoalOperation(owner.id, undo(goal, originalFund.operationId)), [goal]);
+      assert.equal((await read(goal)).goal.reserved, consumed === BigInt(1) ? "199.99" : "100.00");
+      const beforeReleaseUndo = await balance();
+      const restoredRelease = await writeGoalOperation(owner.id, undo(goal, release.operationId));
+      assert.equal(restoredRelease.goal.reserved, "200.00");
+      const afterReleaseUndo = await balance();
+      assert.ok(beforeReleaseUndo && afterReleaseUndo);
+      assert.equal(afterReleaseUndo.income, beforeReleaseUndo.income);
+      assert.equal(afterReleaseUndo.expense, beforeReleaseUndo.expense);
+      assert.equal(afterReleaseUndo.net, beforeReleaseUndo.net);
+      assert.equal(toMoneyCents(afterReleaseUndo.available), toMoneyCents(beforeReleaseUndo.available) - consumed);
+      assert.equal(toMoneyCents(afterReleaseUndo.savings), toMoneyCents(beforeReleaseUndo.savings) + consumed);
+      assert.deepEqual(await getMonthlyMovementExportRows(owner.id, period), csvBefore);
+    }
+
+    const filled = await makeGoal("Capacidad ocupada QA", "10000");
+    await perform({ kind: "fund", goalId: filled, amount: BigInt(10000) });
+    const opening = await perform({ kind: "release", goalId: filled, amount: BigInt(1) });
+    await perform({ kind: "fund", goalId: filled, amount: BigInt(1) });
+    await rejectWithoutEffects(() => writeGoalOperation(owner.id, undo(filled, opening.operationId)), [filled]);
+
+    const transferSource = await makeGoal("Origen consumido QA", "50000");
+    const transferTarget = await makeGoal("Destino consumido QA", "50000");
+    const transferredFund = await perform({ kind: "fund", goalId: transferSource, amount: BigInt(10000) });
+    const transfer = await perform({
+      kind: "transfer", goalId: transferSource, destinationGoalId: transferTarget, amount: BigInt(10000),
+    });
+    await perform({ kind: "fund", goalId: transferSource, amount: BigInt(10000) });
+    await rejectWithoutEffects(
+      () => writeGoalOperation(owner.id, undo(transferSource, transferredFund.operationId)),
+      [transferSource, transferTarget],
+    );
+    await perform({ kind: "release", goalId: transferTarget, amount: BigInt(10000) });
+    await perform({ kind: "fund", goalId: transferTarget, amount: BigInt(10000) });
+    await rejectWithoutEffects(
+      () => writeGoalOperation(owner.id, undo(transferSource, transfer.operationId)),
+      [transferSource, transferTarget],
+    );
+
+    const recallSource = await makeGoal("Origen de retorno QA", "50000");
+    const recallTarget = await makeGoal("Destino de retorno QA", "50000");
+    await perform({ kind: "fund", goalId: recallSource, amount: BigInt(10001) });
+    const targetFund = await perform({ kind: "fund", goalId: recallTarget, amount: BigInt(101) });
+    const incoming = await perform({
+      kind: "transfer", goalId: recallSource, destinationGoalId: recallTarget, amount: BigInt(10001),
+    });
+    const recalled = await writeGoalOperation(owner.id, undo(recallSource, incoming.operationId));
+    assert.equal(recalled.goal.reserved, "100.01");
+    assert.equal(recalled.destination?.reserved, "1.01");
+    await rejectWithoutEffects(
+      () => writeGoalOperation(owner.id, undo(recallTarget, targetFund.operationId)),
+      [recallSource, recallTarget],
+    );
+
+    const race = await makeGoal("Carrera de reversión QA", "50000");
+    const raceFund = await perform({ kind: "fund", goalId: race, amount: BigInt(10000) });
+    const beforeRace = await balance();
+    assert.ok(beforeRace);
+    const raceResults = await Promise.allSettled([
+      writeGoalOperation(owner.id, undo(race, raceFund.operationId)),
+      perform({ kind: "release", goalId: race, amount: BigInt(10000) }),
+    ]);
+    assert.equal(raceResults.filter(result => result.status === "fulfilled").length, 1);
+    for (const result of raceResults) {
+      if (result.status === "rejected") assert.ok(rejectsWith(409)(result.reason));
+    }
+    const raceLedger = await read(race);
+    assert.equal(raceLedger.goal.reserved, "0.00");
+    assert.equal(raceLedger.goal.current, "0.00");
+    assert.equal(raceLedger.history.length, 2);
+    assert.equal(raceLedger.history.filter(entry => entry.kind === "release" || entry.kind === "reverse").length, 1);
+    const afterRace = await balance();
+    assert.ok(afterRace);
+    assert.equal(toMoneyCents(afterRace.available), toMoneyCents(beforeRace.available) + BigInt(10000));
+    assert.equal(toMoneyCents(afterRace.savings), toMoneyCents(beforeRace.savings) - BigInt(10000));
+    assert.equal(afterRace.net, beforeRace.net);
+    assert.deepEqual(await getMonthlyMovementExportRows(owner.id, period), csvBefore);
+
+    const dashboardAfterRace = await getFinanceDashboard({ id: owner.id, name: "QA" }, month);
+    assert.equal(dashboardAfterRace.savings, toMoneyCents(afterRace.savings));
+    const monthlyReport = await getAnalyticsReport(owner.id, query, 100, createReportWork());
+    assert.ok(monthlyReport);
+    assert.deepEqual(monthlyReport.series[0], afterRace);
+    assert.equal(monthlyReport.count, csvBefore.length);
+    assert.equal((await renderReportPdf(monthlyReport)).subarray(0, 5).toString(), "%PDF-");
+    const monthlyWorkbook = new ExcelJS.Workbook();
+    await monthlyWorkbook.xlsx.load(Uint8Array.from(await renderReportXlsx(monthlyReport)).buffer);
+    const monthlySummary = monthlyWorkbook.getWorksheet("Resumen");
+    assert.ok(monthlySummary);
+    const exactIndicators = new Map<string, unknown>();
+    monthlySummary.eachRow(row => {
+      const label = row.getCell(1).value;
+      if (typeof label === "string" && !exactIndicators.has(label)) exactIndicators.set(label, row.getCell(2).value);
+    });
+    assert.equal(exactIndicators.get("Ahorro neto global"), afterRace.savings);
+    assert.equal(exactIndicators.get("Disponible global"), afterRace.available);
+
+    console.log("SM-05: reversión con reserva intacta, consumo parcial y total, transferencias, UUID, aislamiento y carreras verificados.");
+    if (process.env.SAVINGS_LEDGER_SKIP_HISTORICAL === "1") return;
 
     // SM-06/08: synthetic reconciliation changes the original period and preserves progress.
     const { rows: [legacy] } = await pool.query<{ id: number }>(
