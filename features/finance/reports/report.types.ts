@@ -61,7 +61,7 @@ export const reportMetricLabels = {
   income: "Ingresos",
   expense: "Gastos",
   net: "Neto",
-  savings: "Ahorro global",
+  savings: "Ahorro neto global",
   available: "Disponible global",
 } as const;
 

@@ -5,6 +5,7 @@ import {
   desc,
   eq,
   gte,
+  isNull,
   lt,
   sql,
 } from "drizzle-orm";
@@ -14,7 +15,6 @@ import { db } from "@/db";
 import {
   categories,
   monthlyBudgets,
-  savingsContributions,
   savingsGoals,
   transactions,
 } from "@/db/schema";
@@ -26,6 +26,8 @@ import {
 import {
   toMoneyCents,
 } from "@/features/finance/finance.money";
+
+import { savingsFlowAmount, savingsFlowDate, savingsFlowForUser } from "./goal-savings-projection";
 
 type DashboardUser = {
   id: number;
@@ -42,6 +44,7 @@ export async function getFinanceDashboard(
     );
 
   return db.transaction(async (tx) => {
+    const savingsFlow = savingsFlowForUser(user.id);
     /*
      * =======================================================
      * MOVIMIENTOS ANTERIORES
@@ -104,37 +107,10 @@ export async function getFinanceDashboard(
      * =======================================================
      */
 
-    const [
-      previousSavings,
-    ] =
-      await tx
-        .select({
-          total:
-            sql<string>`
-              COALESCE(
-                SUM(
-                  ${savingsContributions.amount}
-                ),
-                0
-              )
-            `,
-        })
-        .from(
-          savingsContributions,
-        )
-        .where(
-          and(
-            eq(
-              savingsContributions.userId,
-              user.id,
-            ),
-
-            lt(
-              savingsContributions.contributionDate,
-              monthInfo.start,
-            ),
-          ),
-        );
+    const [previousSavings] = await tx
+      .select({ total: sql<string>`coalesce(sum(${savingsFlowAmount}), 0)::text` })
+      .from(savingsFlow)
+      .where(sql`${savingsFlowDate} < ${monthInfo.start}::date`);
 
     const previousBalance =
       toMoneyCents(previousSummary?.income ?? "0") -
@@ -220,42 +196,10 @@ export async function getFinanceDashboard(
      * =======================================================
      */
 
-    const [
-      monthlySavings,
-    ] =
-      await tx
-        .select({
-          total:
-            sql<string>`
-              COALESCE(
-                SUM(
-                  ${savingsContributions.amount}
-                ),
-                0
-              )
-            `,
-        })
-        .from(
-          savingsContributions,
-        )
-        .where(
-          and(
-            eq(
-              savingsContributions.userId,
-              user.id,
-            ),
-
-            gte(
-              savingsContributions.contributionDate,
-              monthInfo.start,
-            ),
-
-            lt(
-              savingsContributions.contributionDate,
-              monthInfo.end,
-            ),
-          ),
-        );
+    const [monthlySavings] = await tx
+      .select({ total: sql<string>`coalesce(sum(${savingsFlowAmount}), 0)::text` })
+      .from(savingsFlow)
+      .where(sql`${savingsFlowDate} >= ${monthInfo.start}::date and ${savingsFlowDate} < ${monthInfo.end}::date`);
 
     /*
      * =======================================================
@@ -270,9 +214,10 @@ export async function getFinanceDashboard(
           savingsGoals,
         )
         .where(
-          eq(
-            savingsGoals.userId,
-            user.id,
+          and(
+            eq(savingsGoals.userId, user.id),
+            isNull(savingsGoals.archivedAt),
+            isNull(savingsGoals.closedAt),
           ),
         )
         .orderBy(

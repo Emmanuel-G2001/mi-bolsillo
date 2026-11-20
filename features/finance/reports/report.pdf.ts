@@ -196,7 +196,7 @@ export async function renderReportPdf(report: AnalyticsReport, work: ReportWork 
       { label: "Ingresos", width: 85, align: "right" },
       { label: "Gastos", width: 85, align: "right" },
       { label: "Neto", width: 85, align: "right" },
-      { label: "Ahorro global", width: 95, align: "right" },
+      { label: "Ahorro neto global", width: 95, align: "right" },
       { label: "Disponible global", width: 103, align: "right" },
     ]);
     for (const point of report.series) seriesRow([point.month, ...reportMetricKeys.map((key) => point[key])]);

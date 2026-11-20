@@ -1,8 +1,11 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import {
   and,
   eq,
+  or,
 } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -10,16 +13,13 @@ import { db } from "@/db";
 import {
   savingsContributions,
   savingsGoals,
+  savingsGoalOperations,
 } from "@/db/schema";
 
-import {
-  getBogotaToday,
-} from "@/features/finance/finance.utils";
+import { GoalLedgerError, writeGoalOperation } from "./goal-ledger.service";
 
 import {
   formatMoneyCents,
-  moneyCentsToNumber,
-  toMoneyCents,
 } from "@/features/finance/finance.money";
 
 type CreateGoalInput = {
@@ -37,6 +37,7 @@ type ContributionResult =
       status:
         "completed";
     }
+  | { status: "conflict"; error: string }
   | {
       status:
         "ok";
@@ -65,6 +66,7 @@ export async function createGoal(
     name: input.name,
     targetAmount: formatMoneyCents(input.target),
     currentAmount: formatMoneyCents(initialSavings),
+    initialAmount: formatMoneyCents(initialSavings),
   }).returning();
 
   return {
@@ -79,123 +81,24 @@ export async function contributeToGoal(
   userId: number,
   id: number,
   contribution: bigint,
+  operationId: string = randomUUID(),
 ): Promise<ContributionResult> {
-  return db.transaction(
-    async (tx) => {
-      const [goal] =
-        await tx
-          .select()
-          .from(
-            savingsGoals,
-          )
-          .where(
-            and(
-              eq(
-                savingsGoals.id,
-                id,
-              ),
-
-              eq(
-                savingsGoals.userId,
-                userId,
-              ),
-            ),
-          )
-          .for("update");
-
-      if (!goal) {
-        return {
-          status:
-            "not_found",
-        };
-      }
-
-      const current = toMoneyCents(goal.currentAmount);
-      const target = toMoneyCents(goal.targetAmount);
-      const remaining = target - current;
-
-      if (remaining <= BigInt(0)) {
-        return {
-          status: "completed",
-        };
-      }
-
-      const appliedCents = contribution < remaining ? contribution : remaining;
-      const newCurrent = current + appliedCents;
-
-      const [updated] =
-        await tx
-          .update(
-            savingsGoals,
-          )
-          .set({
-            currentAmount:
-              formatMoneyCents(newCurrent),
-
-            updatedAt:
-              new Date(),
-          })
-          .where(
-            and(
-              eq(
-                savingsGoals.id,
-                id,
-              ),
-
-              eq(
-                savingsGoals.userId,
-                userId,
-              ),
-            ),
-          )
-          .returning();
-
-      await tx
-        .insert(
-          savingsContributions,
-        )
-        .values({
-          userId,
-
-          goalId:
-            goal.id,
-
-          amount:
-            formatMoneyCents(appliedCents),
-
-          contributionDate:
-            getBogotaToday(),
-        });
-
-      return {
-        status:
-          "ok",
-
-        appliedAmount: moneyCentsToNumber(appliedCents),
-
-        goal: {
-          id:
-            String(
-              updated.id,
-            ),
-
-          name:
-            updated.name,
-
-          current:
-            Number(
-              updated.currentAmount,
-            ),
-
-          target:
-            Number(
-              updated.targetAmount,
-            ),
-        },
-      };
-    },
-    { isolationLevel: "read committed" },
-  );
+  try {
+    const result = await writeGoalOperation(userId, { kind: "fund", goalId: id, operationId, amount: contribution });
+    return {
+      status: "ok",
+      appliedAmount: Number(result.amount),
+      goal: {
+        id: String(result.goal.id), name: result.goal.name,
+        current: Number(result.goal.current), target: Number(result.goal.target),
+      },
+    };
+  } catch (error) {
+    if (!(error instanceof GoalLedgerError)) throw error;
+    if (error.status === 404) return { status: "not_found" };
+    if (error.code === "completed") return { status: "completed" };
+    return { status: "conflict", error: error.message };
+  }
 }
 
 export async function deleteGoal(
@@ -240,6 +143,13 @@ export async function deleteGoal(
         .limit(1);
 
       if (contribution) return "has_contributions" as const;
+
+      const [journalEntry] = await tx.select({ id: savingsGoalOperations.operationId })
+        .from(savingsGoalOperations).where(and(
+          eq(savingsGoalOperations.userId, userId),
+          or(eq(savingsGoalOperations.goalId, id), eq(savingsGoalOperations.destinationGoalId, id)),
+        )).limit(1);
+      if (journalEntry) return "has_contributions" as const;
 
       await tx
         .delete(

@@ -13,7 +13,7 @@ const metrics = {
   income: "Ingresos filtrados",
   expense: "Gastos filtrados",
   net: "Balance neto filtrado",
-  savings: "Ahorro global",
+  savings: "Reserva neta global",
   available: "Saldo disponible global",
 } as const satisfies AnalyticsMetrics<string>;
 
@@ -217,7 +217,7 @@ export default function AnalyticsResults({ data }: { data: AnalyticsResponse }) 
   return (
     <div className={styles.results}>
       <div className={styles.scope}>
-        <p>Ahorro global (aportes a metas) y saldo disponible acumulado sin filtros de tipo ni categoría.</p>
+        <p>Reserva neta global (aportes a metas menos liberaciones) y saldo disponible acumulado sin filtros de tipo ni categoría.</p>
         <p>Saldo disponible antes del período · <strong>{money(data.openingAvailable)}</strong></p>
       </div>
       <MonthlyChart series={data.series} />

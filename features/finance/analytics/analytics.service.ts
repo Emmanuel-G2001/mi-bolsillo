@@ -3,7 +3,9 @@ import "server-only";
 import { and, asc, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { categories, savingsContributions, transactions } from "@/db/schema";
+import { categories, transactions } from "@/db/schema";
+
+import { savingsFlowAmount, savingsFlowDate, savingsFlowForUser } from "../goal-savings-projection";
 
 import { buildAnalyticsResponse } from "./analytics.result";
 import type { AnalyticsQuery } from "./analytics.schema";
@@ -61,9 +63,9 @@ export async function readFinanceAnalytics(
 ): Promise<AnalyticsResponse | null> {
   const { filters, startDate, endDate, readStartDate } = query;
   const { categoryId, categoryFilter, categoryRelation, matched, ownMovements } = analyticsPredicates(userId, query);
-  const ownSavings = eq(savingsContributions.userId, userId);
+  const savingsFlow = savingsFlowForUser(userId);
   const movementMonth = sql<string>`to_char(${transactions.transactionDate}::timestamp, 'YYYY-MM')`;
-  const contributionMonth = sql<string>`to_char(${savingsContributions.contributionDate}::timestamp, 'YYYY-MM')`;
+  const contributionMonth = sql<string>`to_char(${savingsFlowDate}::timestamp, 'YYYY-MM')`;
   const distributionType = filters.type === "income" ? "income" : "expense";
   const ownCategories = eq(categories.userId, userId);
   const readCatalog = tx.select({
@@ -88,9 +90,9 @@ export async function readFinanceAnalytics(
 
   report?.check();
   const [openingSavings] = await tx.select({
-    savings: sql<string>`coalesce(sum(${savingsContributions.amount}), 0)::text`,
-  }).from(savingsContributions)
-    .where(and(ownSavings, lt(savingsContributions.contributionDate, startDate)));
+    savings: sql<string>`coalesce(sum(${savingsFlowAmount}), 0)::text`,
+  }).from(savingsFlow)
+    .where(sql`${savingsFlowDate} < ${startDate}::date`);
 
   report?.check();
   const movements = await tx.select({
@@ -109,9 +111,9 @@ export async function readFinanceAnalytics(
   report?.check();
   const savings = await tx.select({
     month: contributionMonth,
-    amount: sql<string>`sum(${savingsContributions.amount})::text`,
-  }).from(savingsContributions)
-    .where(and(ownSavings, gte(savingsContributions.contributionDate, readStartDate), lt(savingsContributions.contributionDate, endDate)))
+    amount: sql<string>`sum(${savingsFlowAmount})::text`,
+  }).from(savingsFlow)
+    .where(sql`${savingsFlowDate} >= ${readStartDate}::date and ${savingsFlowDate} < ${endDate}::date`)
     .groupBy(contributionMonth);
 
   report?.check();

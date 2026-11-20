@@ -29,6 +29,13 @@
       "when": 1790035725153,
       "tag": "0003_blue_expediter",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795142896299,
+      "tag": "0004_savings_goal_ledger",
+      "breakpoints": true
     }
   ]
 }
