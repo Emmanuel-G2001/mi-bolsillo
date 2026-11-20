@@ -2,19 +2,24 @@
 
 import {
   type FormEvent,
+  type MouseEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  ChartNoAxesColumnIncreasing,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
+  FileText,
   Home,
   LogOut,
   Pencil,
@@ -36,8 +41,12 @@ import {
   toMoneyCents,
 } from "@/features/finance/finance.money";
 
-import FinancialAnalytics from "./financial-analytics";
+import type { AnalyticsResponse } from "@/features/finance/analytics/analytics.types";
+
+import sectionStyles from "./dashboard-sections.module.css";
+import FinancialAnalytics, { maximumMonth, minimumMonth } from "./financial-analytics";
 import MonthlyInsights from "./monthly-insights";
+import FinancialReports from "./financial-reports";
 
 type Transaction = {
   id: string;
@@ -66,6 +75,48 @@ type FinanceResponse = {
   goals: Goal[];
   budget: number;
 };
+
+const sections = [
+  { id: "inicio", label: "Inicio", icon: Home },
+  { id: "analitica", label: "Analítica", icon: ChartNoAxesColumnIncreasing },
+  { id: "reportes", label: "Reportes", icon: FileText },
+] as const;
+type DashboardSection = typeof sections[number]["id"];
+
+function subscribeToDashboardLocation(onChange: () => void) {
+  window.addEventListener("popstate", onChange);
+  window.addEventListener("dashboard-section-change", onChange);
+  return () => {
+    window.removeEventListener("popstate", onChange);
+    window.removeEventListener("dashboard-section-change", onChange);
+  };
+}
+
+function dashboardSearch() {
+  return window.location.search;
+}
+
+function initialDashboardSearch() {
+  return "";
+}
+
+function dashboardSectionHref(search: string, section: DashboardSection) {
+  const params = new URLSearchParams(search);
+  params.set("seccion", section);
+  return `?${params}`;
+}
+
+function dashboardSection(search: string): DashboardSection {
+  const param = new URLSearchParams(search).get("seccion");
+  return sections.find(({ id }) => id === param)?.id ?? "inicio";
+}
+
+function dashboardMonth(search: string) {
+  const month = new URLSearchParams(search).get("mes");
+  return month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month >= minimumMonth && month <= maximumMonth
+    ? month
+    : getBogotaMonth();
+}
 
 const emptyTransactions: Transaction[] = [];
 
@@ -128,23 +179,11 @@ function getBogotaToday() {
   }).format(new Date());
 }
 
-function changeMonth(
-  value: string,
-  direction: number,
-) {
-  const [year, month] = value
-    .split("-")
-    .map(Number);
-
-  const date = new Date(
-    year,
-    month - 1 + direction,
-    1,
-  );
-
-  return `${date.getFullYear()}-${String(
-    date.getMonth() + 1,
-  ).padStart(2, "0")}`;
+function changeMonth(value: string, direction: number) {
+  const [year, month] = value.split("-").map(Number);
+  const next = year * 12 + month - 1 + direction;
+  const nextMonth = `${String(Math.floor(next / 12)).padStart(4, "0")}-${String(next % 12 + 1).padStart(2, "0")}`;
+  return nextMonth >= minimumMonth && nextMonth <= maximumMonth ? nextMonth : value;
 }
 
 function formatMonth(value: string) {
@@ -190,10 +229,41 @@ export default function DashboardClient({
 }: {
   logoutAction: () => Promise<void>;
 }) {
+  const search = useSyncExternalStore(subscribeToDashboardLocation, dashboardSearch, initialDashboardSearch);
+  const section = dashboardSection(search);
+  const locationMonth = dashboardMonth(search);
+  const isHome = section === "inicio";
+  const [visited, setVisited] = useState<DashboardSection[]>([]);
+  if (!visited.includes(section)) setVisited([...visited, section]);
+  const [analyticsSnapshot, setAnalyticsSnapshot] = useState<{ data: AnalyticsResponse; mutationId: number } | null>(null);
+  const [catalogErrorVersion, setCatalogErrorVersion] = useState<number | null>(null);
+  const [catalogRetry, setCatalogRetry] = useState(0);
+  const acceptAnalytics = useCallback((data: AnalyticsResponse, mutationId: number) => {
+    setAnalyticsSnapshot({ data, mutationId });
+    setCatalogErrorVersion(null);
+  }, []);
+  const rejectAnalytics = useCallback((mutationId: number) => setCatalogErrorVersion(mutationId), []);
+  const [goalDeleteError, setGoalDeleteError] = useState<string | null>(null);
+  const previousSection = useRef(section);
+  useLayoutEffect(() => {
+    if (previousSection.current === section) return;
+    previousSection.current = section;
+    const heading = section === "inicio" ? "inicio-heading"
+      : section === "analitica" ? "analytics-heading" : "reports-heading";
+    document.getElementById(heading)?.focus({ preventScroll: true });
+  }, [section]);
+
   const requestId = useRef(0);
-  const isCurrentRequest = useCallback((id: number) => id === requestId.current, []);
+  const isCurrentRequest = useCallback(
+    (id: number, month: string) => {
+      const search = window.location.search;
+      return id === requestId.current && dashboardSection(search) === "inicio" && dashboardMonth(search) === month;
+    },
+    [],
+  );
   const analyticsMutationId = useRef(0);
   const [analyticsMutation, setAnalyticsMutation] = useState(0);
+  const currentCatalog = analyticsSnapshot?.mutationId === analyticsMutation ? analyticsSnapshot.data : null;
   const isCurrentAnalyticsMutation = useCallback(
     (id: number) => id === analyticsMutationId.current,
     [],
@@ -208,7 +278,7 @@ export default function DashboardClient({
     error: string | null;
   } | null>(null);
 
-  const { month: selectedMonth } = financeRequest;
+  const selectedMonth = locationMonth;
   const loading = financeStatus?.id !== financeRequest.id;
   const financeError = loading ? null : financeStatus?.error;
   const monthlyFinance = finance?.month === selectedMonth ? finance : null;
@@ -265,18 +335,40 @@ export default function DashboardClient({
     "income" | "expense"
   >("expense");
 
+  function navigateSection(event: MouseEvent<HTMLAnchorElement>, target: DashboardSection) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    if (target === section) return;
+    window.history.pushState(null, "", dashboardSectionHref(window.location.search, target));
+    window.dispatchEvent(new Event("dashboard-section-change"));
+    window.scrollTo(0, 0);
+  }
+
+  if (financeRequest.month !== locationMonth) {
+    setBudgetError(null);
+    setFinanceRequest({ id: financeRequest.id + 1, month: locationMonth });
+  }
+  useLayoutEffect(() => {
+    if (requestId.current >= financeRequest.id) return;
+    requestId.current = financeRequest.id;
+    ++budgetSubmissionId.current;
+  }, [financeRequest.id]);
+
   function requestFinance(direction = 0) {
+    const search = window.location.search;
+    const month = direction ? changeMonth(dashboardMonth(search), direction) : dashboardMonth(search);
     if (direction) {
+      if (month === dashboardMonth(search)) return;
       ++budgetSubmissionId.current;
       setBudgetError(null);
+      const params = new URLSearchParams(search);
+      params.set("mes", month);
+      window.history.replaceState(null, "", `?${params}`);
+      window.dispatchEvent(new Event("dashboard-section-change"));
     }
 
     // Invalidate the old GET immediately, before the next effect runs.
-    const id = ++requestId.current;
-    setFinanceRequest((current) => ({
-      id,
-      month: direction ? changeMonth(current.month, direction) : current.month,
-    }));
+    setFinanceRequest({ id: ++requestId.current, month });
   }
 
   function refreshAfterMutation() {
@@ -284,11 +376,15 @@ export default function DashboardClient({
     requestFinance();
   }
 
+  const completedFinanceRequest = financeStatus?.id;
   useEffect(() => {
     const { id, month } = financeRequest;
+    const actualSearch = window.location.search;
+    if (!isHome || dashboardSection(actualSearch) !== "inicio" || dashboardMonth(actualSearch) !== month
+      || completedFinanceRequest === id) return;
     const controller = new AbortController();
     const isCurrent = () =>
-      isCurrentRequest(id) && !controller.signal.aborted;
+      isCurrentRequest(id, month) && !controller.signal.aborted;
 
     async function loadFinance() {
       try {
@@ -334,7 +430,7 @@ export default function DashboardClient({
       void loadFinance();
     }
     return () => controller.abort();
-  }, [financeRequest, isCurrentRequest]);
+  }, [completedFinanceRequest, financeRequest, isCurrentRequest, isHome]);
 
   /*
    * RESUMEN DEL MES
@@ -784,6 +880,7 @@ export default function DashboardClient({
       | "goal",
     id: string,
   ) {
+    if (kind === "goal") setGoalDeleteError(null);
     const response = await fetch(
       `/api/finance?kind=${kind}&id=${encodeURIComponent(
         id,
@@ -794,6 +891,12 @@ export default function DashboardClient({
     );
 
     if (!response.ok) {
+      if (kind === "goal" && response.status === 409) {
+        const body = await response.json().catch(() => null);
+        setGoalDeleteError(typeof body?.error === "string"
+          ? body.error
+          : "No es posible eliminar esta meta sin revisar antes sus aportes.");
+      }
       return;
     }
 
@@ -830,7 +933,7 @@ export default function DashboardClient({
           </span>
         </div>
 
-        <div className="month-picker">
+        <div className="month-picker" style={isHome ? undefined : { visibility: "hidden" }}>
           <button
             type="button"
             aria-label="Mes anterior"
@@ -876,6 +979,21 @@ export default function DashboardClient({
       </header>
 
       <div className="dashboard-shell">
+        <nav className={sectionStyles.navigation} aria-label="Navegación principal">
+          {sections.map(({ id, label, icon: Icon }) => (
+            <a
+              key={id}
+              href={dashboardSectionHref(search, id)}
+              aria-current={id === section ? "page" : undefined}
+              onClick={(event) => navigateSection(event, id)}
+            >
+              <Icon size={18} aria-hidden="true" />
+              <span>{label}</span>
+            </a>
+          ))}
+        </nav>
+
+        <div hidden={!isHome}>
         {/* BIENVENIDA */}
 
         <section className="welcome-row">
@@ -884,7 +1002,7 @@ export default function DashboardClient({
               TU RESUMEN DEL MES
             </p>
 
-            <h1>
+            <h1 id="inicio-heading" tabIndex={-1}>
               Hola,{" "}
               {userName ||
                 "Emmanuel"}{" "}
@@ -951,6 +1069,7 @@ export default function DashboardClient({
         </section>
 
         <MonthlyInsights
+          active={isHome && financeRequest.month === selectedMonth}
           request={financeRequest}
           isCurrentRequest={isCurrentRequest}
           onRetry={requestFinance}
@@ -1259,6 +1378,10 @@ export default function DashboardClient({
               </button>
             </div>
 
+            {goalDeleteError && (
+              <p className="mb-3 text-sm text-red-700" role="alert">{goalDeleteError}</p>
+            )}
+
             <div className="goals-list">
               {goals.map(
                 (goal) => {
@@ -1535,57 +1658,84 @@ export default function DashboardClient({
         </section>
         </div>
 
-        <FinancialAnalytics
-          initialMonth={selectedMonth}
-          mutationId={analyticsMutation}
-          isCurrentMutation={isCurrentAnalyticsMutation}
-        />
+        </div>
+
+        {(section !== "inicio" || visited.includes("analitica") || visited.includes("reportes")) && (
+          <div hidden={section !== "analitica"}>
+            <FinancialAnalytics
+              initialMonth={selectedMonth}
+              active={section === "analitica" || (section === "reportes" && !currentCatalog)}
+              onResult={acceptAnalytics}
+              onFailure={rejectAnalytics}
+              retryToken={catalogRetry}
+              mutationId={analyticsMutation}
+              isCurrentMutation={isCurrentAnalyticsMutation}
+            />
+          </div>
+        )}
+
+        {(section === "reportes" || visited.includes("reportes")) && (
+          <div hidden={section !== "reportes"}>
+            <FinancialReports
+              active={section === "reportes"}
+              initialMonth={selectedMonth}
+              categories={currentCatalog?.categories}
+              catalogError={catalogErrorVersion === analyticsMutation}
+              onRetryCatalog={() => {
+                setCatalogErrorVersion(null);
+                setCatalogRetry((value) => value + 1);
+              }}
+              analyticsFilters={visited.includes("analitica") ? currentCatalog?.filters : undefined}
+            />
+          </div>
+        )}
       </div>
 
-      {/* MOBILE NAV */}
-
-      <nav
-        className="mobile-nav"
-        aria-label="Navegación principal"
-      >
-        <a
-          className="active"
-          href="#"
+      {isHome && (
+        <nav
+          className="mobile-nav"
+          aria-label="Acciones rápidas"
         >
-          <Home
-            size={20}
-          />
+          <a
+            className="active"
+            href="#"
+          >
+            <Home
+              size={20}
+            />
 
-          <span>
-            Inicio
-          </span>
-        </a>
+            <span>
+              Inicio
+            </span>
+          </a>
 
-        <button
-          type="button"
-          aria-label="Nuevo movimiento"
-          onClick={() =>
-            setTransactionOpen(
-              true,
-            )
-          }
-        >
-          <Plus
-            size={23}
-          />
-        </button>
+          <button
+            type="button"
+            aria-label="Nuevo movimiento"
+            onClick={() =>
+              setTransactionOpen(
+                true,
+              )
+            }
+          >
+            <Plus
+              size={23}
+            />
+          </button>
 
-        <a href="#metas">
-          <Target
-            size={20}
-          />
+          <a href="#metas">
+            <Target
+              size={20}
+            />
 
-          <span>
-            Metas
-          </span>
-        </a>
-      </nav>
+            <span>
+              Metas
+            </span>
+          </a>
+        </nav>
+      )}
 
+      <div hidden={!isHome}>
       {/* NUEVO MOVIMIENTO */}
 
       {transactionOpen && (
@@ -2309,6 +2459,7 @@ export default function DashboardClient({
           </div>
         </div>
       )}
+      </div>
     </main>
   );
 }

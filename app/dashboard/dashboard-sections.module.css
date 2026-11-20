@@ -1,0 +1,45 @@
+.navigation {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+}
+
+.navigation a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid #e2e6ef;
+  border-radius: 0.75rem;
+  background: #fff;
+  color: #4b5567;
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.navigation a:hover,
+.navigation a[aria-current="page"] {
+  background: #f3f1ff;
+  color: #4336ad;
+}
+
+.navigation a[aria-current="page"] {
+  border-color: #8b7cf6;
+}
+
+.navigation a:focus-visible {
+  outline: 2px solid #4336ad;
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .navigation a {
+    flex: 1;
+    min-width: 0;
+    padding-inline: 0.2rem;
+    font-size: 0.75rem;
+  }
+}
