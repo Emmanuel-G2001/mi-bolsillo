@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import type {
   AnalyticsFilters,
@@ -9,13 +9,17 @@ import type {
 import AnalyticsResults from "./financial-analytics-results";
 import styles from "./financial-analytics.module.css";
 
-const minimumMonth = "0100-01";
-const maximumMonth = "9999-12";
+export const minimumMonth = "0100-01";
+export const maximumMonth = "9999-12";
 const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
 const loadError = "No fue posible consultar la analítica financiera.";
 
 type Props = {
   initialMonth: string;
+  active: boolean;
+  onResult: (data: AnalyticsResponse, mutationId: number) => void;
+  onFailure: (mutationId: number) => void;
+  retryToken: number;
   mutationId: number;
   isCurrentMutation: (id: number) => boolean;
 };
@@ -24,113 +28,6 @@ type Result = { id: number; mutationId: number } & (
   | { data: AnalyticsResponse }
   | { error: string }
 );
-
-const reportFormats = {
-  pdf: { label: "PDF", mime: "application/pdf", maxBytes: 8 * 1024 * 1024 },
-  xlsx: {
-    label: "XLSX",
-    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    maxBytes: 16 * 1024 * 1024,
-  },
-} as const;
-
-type ReportFormat = keyof typeof reportFormats;
-type ReportStatus = { message: string; kind: "pending" | "success" | "error" };
-
-const reportError = "No fue posible descargar el reporte. Inténtalo de nuevo.";
-const reportErrors: Partial<Record<number, string>> = {
-  400: "Vuelve a aplicar los filtros antes de descargar el reporte.",
-  401: "Inicia sesión para descargar el reporte.",
-  403: "Abre Analítica en Mi Bolsillo para descargar el reporte.",
-  413: "El reporte supera el tamaño permitido. Reduce el período o aplica filtros.",
-  429: "Ya hay una descarga en preparación. Inténtalo de nuevo.",
-  503: "No fue posible preparar el reporte a tiempo. Inténtalo de nuevo.",
-};
-
-function ReportDownloads({
-  filters,
-  isCurrentSelection,
-}: {
-  filters: AnalyticsFilters;
-  isCurrentSelection: () => boolean;
-}) {
-  const [status, setStatus] = useState<ReportStatus | null>(null);
-  const active = useRef<AbortController | null>(null);
-
-  useLayoutEffect(() => () => active.current?.abort(), []);
-
-  async function download(format: ReportFormat) {
-    if (active.current || !isCurrentSelection()) return;
-
-    const controller = new AbortController();
-    active.current = controller;
-    const isCurrent = () =>
-      active.current === controller && !controller.signal.aborted && isCurrentSelection();
-    const { label, mime, maxBytes } = reportFormats[format];
-    setStatus({ kind: "pending", message: `Preparando ${label}…` });
-
-    try {
-      const query = new URLSearchParams({ ...filters, format });
-      const response = await fetch(`/api/finance/reports/analytics?${query}`, {
-        cache: "no-store",
-        redirect: "error",
-        signal: controller.signal,
-      });
-      if (!isCurrent()) return;
-
-      const responseMime = response.headers.get("Content-Type")?.split(";")[0].trim();
-      if (response.status !== 200 || responseMime !== mime) {
-        setStatus({ kind: "error", message: reportErrors[response.status] ?? reportError });
-        return;
-      }
-
-      const blob = await response.blob();
-      if (!isCurrent()) return;
-      if (blob.size === 0 || blob.size > maxBytes) {
-        setStatus({ kind: "error", message: reportError });
-        return;
-      }
-
-      const link = document.createElement("a");
-      const url = URL.createObjectURL(blob);
-      try {
-        link.href = url;
-        link.download = `mi-bolsillo-analitica-${filters.startMonth}-a-${filters.endMonth}.${format}`;
-        document.body.append(link);
-        link.click();
-        setStatus({ kind: "success", message: `Descarga de ${label} iniciada.` });
-      } finally {
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      }
-    } catch {
-      if (isCurrent()) setStatus({ kind: "error", message: reportError });
-    } finally {
-      if (active.current === controller) active.current = null;
-      controller.abort();
-    }
-  }
-
-  const pending = status?.kind === "pending";
-  return (
-    <>
-      <div className={styles.actions} role="group" aria-label="Descargar reportes de analítica">
-        <button type="button" className={styles.button} aria-disabled={pending} onClick={() => void download("pdf")}>
-          Descargar PDF
-        </button>
-        <button type="button" className={styles.button} aria-disabled={pending} onClick={() => void download("xlsx")}>
-          Descargar XLSX
-        </button>
-      </div>
-      <div role="status" aria-atomic="true">
-        {status && status.kind !== "error" && <p className={styles.note}>{status.message}</p>}
-      </div>
-      <div role="alert" aria-atomic="true">
-        {status?.kind === "error" && <p className={styles.error}>{status.message}</p>}
-      </div>
-    </>
-  );
-}
 
 function monthIndex(month: string) {
   const [year, monthOfYear] = month.split("-").map(Number);
@@ -144,7 +41,7 @@ function presetStart(anchor: string, months: number) {
   return `${year}-${month}`;
 }
 
-function validPeriod({ startMonth, endMonth }: AnalyticsFilters) {
+export function validPeriod({ startMonth, endMonth }: AnalyticsFilters) {
   return (
     monthPattern.test(startMonth) &&
     monthPattern.test(endMonth) &&
@@ -164,6 +61,10 @@ function matchesFilters(actual: AnalyticsFilters, expected: AnalyticsFilters) {
 
 export default function FinancialAnalytics({
   initialMonth,
+  active,
+  onResult,
+  onFailure,
+  retryToken,
   mutationId,
   isCurrentMutation,
 }: Props) {
@@ -180,6 +81,7 @@ export default function FinancialAnalytics({
   const [periodError, setPeriodError] = useState(false);
 
   const latestId = useRef(0);
+  const completedRequest = useRef<{ id: number; mutationId: number; retryToken: number } | null>(null);
   const activeController = useRef<AbortController | null>(null);
   const { id, filters } = request;
   const current = result?.id === id && result.mutationId === mutationId ? result : null;
@@ -211,6 +113,9 @@ export default function FinancialAnalytics({
   }
 
   useEffect(() => {
+    const completed = completedRequest.current;
+    if (!active || (completed?.id === id && completed.mutationId === mutationId && completed.retryToken === retryToken)) return;
+
     const controller = new AbortController();
     activeController.current = controller;
     const isCurrent = () =>
@@ -225,6 +130,8 @@ export default function FinancialAnalytics({
         });
         if (!isCurrent()) return;
         if (!response.ok) {
+          completedRequest.current = { id, mutationId, retryToken };
+          onFailure(mutationId);
           setResult({
             id,
             mutationId,
@@ -239,20 +146,26 @@ export default function FinancialAnalytics({
         if (!isCurrent()) return;
         if (!matchesFilters(data.filters, filters)) throw new Error(loadError);
 
+        completedRequest.current = { id, mutationId, retryToken };
         setCategories(data.categories);
+        onResult(data, mutationId);
         setResult({ id, mutationId, data });
       } catch {
-        if (isCurrent()) setResult({ id, mutationId, error: loadError });
+        if (isCurrent()) {
+          completedRequest.current = { id, mutationId, retryToken };
+          onFailure(mutationId);
+          setResult({ id, mutationId, error: loadError });
+        }
       }
     }
 
     if (isCurrent()) void loadAnalytics();
     return () => controller.abort();
-  }, [id, filters, mutationId, isCurrentMutation]);
+  }, [active, id, filters, mutationId, isCurrentMutation, onResult, onFailure, retryToken]);
 
   return (
     <section className={`panel ${styles.panel}`} aria-labelledby="analytics-heading">
-      <h2 id="analytics-heading">Analítica financiera</h2>
+      <h1 id="analytics-heading" tabIndex={-1} className="text-lg font-bold tracking-tight">Analítica financiera</h1>
 
       <div className={styles.actions} role="group" aria-label="Períodos predefinidos">
         <button type="button" className={styles.button} onClick={() => applyPreset(6)}>
@@ -352,16 +265,7 @@ export default function FinancialAnalytics({
           </button>
         </div>
       )}
-      {current && "data" in current && (
-        <>
-          <ReportDownloads
-            key={`${id}:${mutationId}`}
-            filters={current.data.filters}
-            isCurrentSelection={() => id === latestId.current && isCurrentMutation(mutationId)}
-          />
-          <AnalyticsResults data={current.data} />
-        </>
-      )}
+      {current && "data" in current && <AnalyticsResults data={current.data} />}
     </section>
   );
 }

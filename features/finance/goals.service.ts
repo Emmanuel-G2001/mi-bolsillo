@@ -229,33 +229,17 @@ export async function deleteGoal(
           .for("update");
 
       if (!goal) {
-        return false;
+        return "not_found" as const;
       }
 
-      /*
-       * Al eliminar una meta,
-       * sus aportes desaparecen.
-       *
-       * Por tanto ese dinero vuelve
-       * al saldo disponible.
-       */
-      await tx
-        .delete(
-          savingsContributions,
-        )
-        .where(
-          and(
-            eq(
-              savingsContributions.goalId,
-              id,
-            ),
+      // Any link must survive deletion, including inconsistent legacy links.
+      const [contribution] = await tx
+        .select({ id: savingsContributions.id })
+        .from(savingsContributions)
+        .where(eq(savingsContributions.goalId, goal.id))
+        .limit(1);
 
-            eq(
-              savingsContributions.userId,
-              userId,
-            ),
-          ),
-        );
+      if (contribution) return "has_contributions" as const;
 
       await tx
         .delete(
@@ -275,7 +259,7 @@ export async function deleteGoal(
           ),
         );
 
-      return true;
+      return "deleted" as const;
     },
     { isolationLevel: "read committed" },
   );

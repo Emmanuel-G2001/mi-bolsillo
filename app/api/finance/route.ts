@@ -530,13 +530,13 @@ export async function DELETE(
     kind ===
     "goal"
   ) {
-    const deleted =
+    const result =
       await deleteGoal(
         user.id,
         id,
       );
 
-    if (!deleted) {
+    if (result === "not_found") {
       return NextResponse.json(
         {
           error:
@@ -545,6 +545,13 @@ export async function DELETE(
         {
           status: 404,
         },
+      );
+    }
+
+    if (result === "has_contributions") {
+      return NextResponse.json(
+        { error: "Esta meta tiene aportes registrados. Se conserva para proteger tu historial y tu saldo." },
+        { status: 409 },
       );
     }
 

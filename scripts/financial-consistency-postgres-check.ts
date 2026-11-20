@@ -214,7 +214,7 @@ async function main() {
     assert.deepEqual((await contributions()).rows, []);
     assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), baseline);
     assert.deepEqual(await contributeToGoal(owner.id, goalId, BigInt(567)), { status: "not_found" });
-    assert.equal(await deleteGoal(owner.id, goalId), false);
+    assert.equal(await deleteGoal(owner.id, goalId), "not_found");
     const contributed = await contributeToGoal(other.id, goalId, BigInt(567));
     assert.equal(contributed.status, "ok");
     assert.equal(contributed.goal.current, 18.01);
@@ -227,9 +227,17 @@ async function main() {
       available: "44.33",
       savings: "5.67",
     });
-    assert.equal(await deleteGoal(other.id, goalId), true);
-    assert.deepEqual((await contributions()).rows, []);
-    assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), baseline);
+    assert.equal(await deleteGoal(other.id, goalId), "has_contributions");
+    assert.deepEqual((await contributions()).rows, [{ amount: "5.67" }]);
+    assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), afterContribution);
+
+    const initialOnly = await createGoal(other.id, {
+      name: "Solo ahorro inicial QA", target: BigInt(500000000), current: BigInt(200000000),
+    });
+    assert.equal(initialOnly.current, 2000000);
+    assert.equal(await deleteGoal(other.id, Number(initialOnly.id)), "deleted");
+    assert.equal(await deleteGoal(other.id, Number(initialOnly.id)), "not_found");
+    assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), afterContribution);
 
     const almostComplete = await createGoal(other.id, {
       name: "Meta concurrente QA", target: BigInt(10000), current: BigInt(9899),
@@ -245,11 +253,49 @@ async function main() {
     }).sort((first, second) => first - second), [0.01, 1]);
     const capped = await getFinanceAnalytics(other.id, goalQuery);
     assert.ok(capped);
-    assert.equal(capped.series[0].savings, "1.01");
-    assert.equal(capped.series[0].available, "48.99");
-    assert.equal(await deleteGoal(other.id, concurrentId), true);
-    assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), baseline);
-    console.log("MA-01–MA-03: progreso inicial, saldo, aportes y aislamiento verificados.");
+    assert.equal(capped.series[0].savings, "6.68");
+    assert.equal(capped.series[0].available, "43.32");
+    assert.equal(await deleteGoal(other.id, concurrentId), "has_contributions");
+    assert.deepEqual(await getFinanceAnalytics(other.id, goalQuery), capped);
+
+    const racing = await createGoal(other.id, { name: "Aporte contra borrado QA", target: BigInt(1000), current: BigInt(50) });
+    const racingId = Number(racing.id);
+    const [deletion, contribution] = await Promise.all([
+      deleteGoal(other.id, racingId),
+      contributeToGoal(other.id, racingId, BigInt(99)),
+    ]);
+    assert.deepEqual(
+      [deletion, contribution.status],
+      deletion === "deleted" ? ["deleted", "not_found"] : ["has_contributions", "ok"],
+    );
+    const raceState = await pool.query<{ current_amount: string; contributed: string }>(
+      `SELECT g.current_amount::text, coalesce(sum(c.amount), 0)::text AS contributed
+       FROM savings_goals g
+       LEFT JOIN savings_contributions c ON c.goal_id = g.id AND c.user_id = g.user_id
+       WHERE g.id = $1 AND g.user_id = $2 GROUP BY g.id`,
+      [racingId, other.id],
+    );
+    assert.deepEqual(raceState.rows, deletion === "deleted" ? [] : [{ current_amount: "1.49", contributed: "0.99" }]);
+
+    const legacy = await createGoal(other.id, {
+      name: "Meta histórica QA", target: BigInt(500000000), current: BigInt(230000000),
+    });
+    const legacyId = Number(legacy.id);
+    await pool.query(
+      `INSERT INTO savings_contributions (user_id, goal_id, amount, contribution_date)
+       VALUES ($1, $3, 2000000.00, DATE '2024-01-15'),
+              ($1, $3, 300000.00, DATE '2024-02-15'),
+              ($2, $3, 0.01, DATE '2024-02-16')`,
+      [other.id, owner.id, legacyId],
+    );
+    const readLinks = () => pool.query(
+      "SELECT id, goal_id, user_id, amount::text, contribution_date::text FROM savings_contributions WHERE goal_id = $1 ORDER BY id",
+      [legacyId],
+    );
+    const history = (await readLinks()).rows;
+    assert.equal(await deleteGoal(other.id, legacyId), "has_contributions");
+    assert.deepEqual((await readLinks()).rows, history);
+    console.log("MH-01–MH-03: progreso, centavos, saldo, borrado, aportes históricos y aislamiento verificados.");
 
     stage = "I3-04: fechas civiles en el archivo XLSX";
     await pool.query(
