@@ -1,9 +1,5 @@
 {
   "git": {
-    "deploymentEnabled": {
-      "fix/financial-consistency": false,
-      "feat/financial-intelligence": false,
-      "feat/dashboard-sections": false
-    }
+    "deploymentEnabled": false
   }
 }
