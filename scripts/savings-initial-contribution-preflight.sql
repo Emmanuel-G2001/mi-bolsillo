@@ -10,6 +10,17 @@ BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout = '5s';
 SET LOCAL lock_timeout = '1s';
 
+SELECT :'legacy_ended_at' ~
+  '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$'
+  AS cutoff_has_explicit_offset
+\gset
+\if :cutoff_has_explicit_offset
+\else
+DO $$ BEGIN
+  RAISE EXCEPTION 'legacy_ended_at requiere una fecha ISO 8601 con offset explícito';
+END $$;
+\endif
+
 WITH parameters AS (
   SELECT
     :'owner_id'::integer AS owner_id,

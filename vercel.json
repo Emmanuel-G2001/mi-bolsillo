@@ -3,7 +3,8 @@
     "deploymentEnabled": {
       "fix/financial-consistency": false,
       "feat/financial-intelligence": false,
-      "feat/dashboard-sections": false
+      "feat/dashboard-sections": false,
+      "feat/savings-goal-ledger": false
     }
   }
 }
