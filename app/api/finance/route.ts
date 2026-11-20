@@ -2,6 +2,7 @@ import {
   NextRequest,
   NextResponse,
 } from "next/server";
+import { z } from "zod";
 
 import {
   upsertBudget,
@@ -355,12 +356,22 @@ export async function PATCH(
     body.kind ===
     "goal"
   ) {
+    const operationKey = request.headers.get("idempotency-key");
+    const idempotencyKey = z.uuid().safeParse(operationKey);
+    if (!idempotencyKey.success) {
+      return NextResponse.json({ error: "Envía una clave Idempotency-Key válida para abonar." }, { status: 400 });
+    }
     const result =
       await contributeToGoal(
         user.id,
         body.id,
         body.amount,
+        idempotencyKey.data.toLowerCase(),
       );
+
+    if (result.status === "conflict") {
+      return NextResponse.json({ error: result.error }, { status: 409 });
+    }
 
     if (
       result.status ===

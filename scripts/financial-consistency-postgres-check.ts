@@ -2,7 +2,7 @@
 // Configura DATABASE_URL con loopback y la base `mi_bolsillo_qa` con el esquema disponible.
 // Ejecuta desde la raíz del repositorio:
 // node --import tsx scripts/financial-consistency-postgres-check.ts
-// Este script crea y elimina únicamente sus propios usuarios sintéticos.
+// Descarta la base de QA al terminar. Las entradas del diario son inmutables.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import * as nodeModule from "node:module";
@@ -208,7 +208,7 @@ async function main() {
     assert.equal(goal.current, 12.34);
     const goalId = Number(goal.id);
     const contributions = () => pool.query<{ amount: string }>(
-      "SELECT amount::text FROM savings_contributions WHERE goal_id = $1 ORDER BY id",
+      "SELECT amount::text FROM savings_goal_operations WHERE goal_id = $1 AND kind = 'fund' ORDER BY created_at, operation_id",
       [goalId],
     );
     assert.deepEqual((await contributions()).rows, []);
@@ -271,7 +271,7 @@ async function main() {
     const raceState = await pool.query<{ current_amount: string; contributed: string }>(
       `SELECT g.current_amount::text, coalesce(sum(c.amount), 0)::text AS contributed
        FROM savings_goals g
-       LEFT JOIN savings_contributions c ON c.goal_id = g.id AND c.user_id = g.user_id
+       LEFT JOIN savings_goal_operations c ON c.goal_id = g.id AND c.user_id = g.user_id AND c.kind = 'fund'
        WHERE g.id = $1 AND g.user_id = $2 GROUP BY g.id`,
       [racingId, other.id],
     );
@@ -330,7 +330,7 @@ async function main() {
     }
     console.log("I3-04: fechas civiles ISO verificadas en XLSX con DateStyle ISO, SQL y German.");
   } finally {
-    await pool.query("DELETE FROM users WHERE email = ANY($1::text[])", [emails]).finally(() => pool.end());
+    await pool.end();
   }
 }
 

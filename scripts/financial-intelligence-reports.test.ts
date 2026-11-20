@@ -216,7 +216,7 @@ test("I3-03: el PDF vacío mantiene los indicadores globales y explica el detall
   const pdf = await renderReportPdf(reportFor([]));
   const text = pdfContent(pdf).map((page) => page.text).join("\n");
   assert.match(text, /0 movimientos/);
-  assert.match(text, /Ahorro global/);
+  assert.match(text, /Ahorro neto global/);
   assert.match(text, /Disponible global/);
   assert.match(text, /-2\.30/);
   assert.match(text, /Sin movimientos para los filtros aplicados/);

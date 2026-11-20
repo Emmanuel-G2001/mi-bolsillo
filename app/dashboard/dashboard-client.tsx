@@ -47,6 +47,8 @@ import sectionStyles from "./dashboard-sections.module.css";
 import FinancialAnalytics, { maximumMonth, minimumMonth } from "./financial-analytics";
 import MonthlyInsights from "./monthly-insights";
 import FinancialReports from "./financial-reports";
+import GoalLedgerDialog from "./goal-ledger-dialog";
+import goalLedgerStyles from "./goal-ledger-dialog.module.css";
 
 type Transaction = {
   id: string;
@@ -241,8 +243,8 @@ export default function DashboardClient({
   const acceptAnalytics = useCallback((data: AnalyticsResponse, mutationId: number) => {
     setAnalyticsSnapshot({ data, mutationId });
     setCatalogErrorVersion(null);
-  }, []);
-  const rejectAnalytics = useCallback((mutationId: number) => setCatalogErrorVersion(mutationId), []);
+  }, [setAnalyticsSnapshot, setCatalogErrorVersion]);
+  const rejectAnalytics = useCallback((mutationId: number) => setCatalogErrorVersion(mutationId), [setCatalogErrorVersion]);
   const [goalDeleteError, setGoalDeleteError] = useState<string | null>(null);
   const previousSection = useRef(section);
   useLayoutEffect(() => {
@@ -307,14 +309,8 @@ export default function DashboardClient({
   const budgetSubmissionId = useRef(0);
   const [budgetError, setBudgetError] = useState<string | null>(null);
 
-  const [
-    contributionGoal,
-    setContributionGoal,
-  ] = useState<Goal | null>(null);
-
-  const remainingGoalCents = contributionGoal
-    ? toMoneyCents(contributionGoal.target) - toMoneyCents(contributionGoal.current)
-    : BigInt(0);
+  const [goalLedger, setGoalLedger] = useState<{ id?: string; fund?: boolean } | null>(null);
+  const goalOperationKeys = useRef(new Map<string, string>());
 
   const [
     editingTransaction,
@@ -809,69 +805,6 @@ export default function DashboardClient({
   }
 
   /*
-   * ABONAR A META
-   */
-  async function contributeToGoal(
-    event: FormEvent<HTMLFormElement>,
-  ) {
-    event.preventDefault();
-
-    if (!contributionGoal) {
-      return;
-    }
-
-    const form =
-      event.currentTarget;
-
-    const data =
-      new FormData(form);
-
-    const amount = Number(
-      data.get("amount"),
-    );
-
-    if (
-      !Number.isFinite(amount) ||
-      amount <= 0
-    ) {
-      return;
-    }
-
-    const response = await fetch(
-      "/api/finance",
-      {
-        method: "PATCH",
-
-        headers: {
-          "content-type":
-            "application/json",
-        },
-
-        body: JSON.stringify({
-          kind: "goal",
-          id: contributionGoal.id,
-          amount,
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      return;
-    }
-
-    if (form.isConnected) {
-      setContributionGoal(null);
-    }
-
-    /*
-     * Recargamos todo el resumen porque
-     * un abono modifica tanto la meta
-     * como el ahorro y el saldo disponible.
-     */
-    refreshAfterMutation();
-  }
-
-  /*
    * ELIMINAR
    */
   async function removeItem(
@@ -1128,7 +1061,7 @@ export default function DashboardClient({
                 ? `Saldo anterior: ${money(
                     previousBalanceCents,
                   )}`
-                : "Ingresos menos gastos y ahorro acumulados"}
+                : "Ingresos menos gastos y reserva neta acumulada"}
             </p>
           </article>
 
@@ -1188,7 +1121,7 @@ export default function DashboardClient({
           <article className="metric-card">
             <div className="card-top">
               <span>
-                Ahorrado
+                Reserva neta
               </span>
 
               <span className="icon-pill mint">
@@ -1206,10 +1139,8 @@ export default function DashboardClient({
                   )}
             </strong>
 
-            <p className="positive">
-              {summary.income
-                ? `${wholePercent(summary.savings, summary.income)}% de tus ingresos`
-                : "Ahorrado este mes"}
+            <p className={summary.savings >= BigInt(0) ? "positive" : undefined}>
+              Aportes menos liberaciones del mes
             </p>
           </article>
 
@@ -1360,6 +1291,9 @@ export default function DashboardClient({
                 <h2>
                   Tus metas
                 </h2>
+                <button type="button" className="text-button" onClick={() => setGoalLedger({})}>
+                  Archivadas y cerradas
+                </button>
               </div>
 
               <button
@@ -1445,9 +1379,7 @@ export default function DashboardClient({
                               type="button"
                               className="goal-contribute"
                               onClick={() =>
-                                setContributionGoal(
-                                  goal,
-                                )
+                                setGoalLedger({ id: goal.id, fund: true })
                               }
                             >
                               + Abonar
@@ -1461,21 +1393,24 @@ export default function DashboardClient({
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        className="delete-goal"
-                        aria-label={`Eliminar ${goal.name}`}
-                        onClick={() =>
-                          removeItem(
-                            "goal",
-                            goal.id,
-                          )
-                        }
-                      >
-                        <Trash2
-                          size={15}
-                        />
-                      </button>
+                      <div className={goalLedgerStyles.cardActions}>
+                        <button
+                          type="button"
+                          className="text-button"
+                          aria-label={`Gestionar ${goal.name}`}
+                          onClick={() => setGoalLedger({ id: goal.id })}
+                        >
+                          Gestionar
+                        </button>
+                        <button
+                          type="button"
+                          className="delete-goal"
+                          aria-label={`Eliminar ${goal.name}`}
+                          onClick={() => removeItem("goal", goal.id)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
                   );
                 },
@@ -2324,140 +2259,14 @@ export default function DashboardClient({
         </div>
       )}
 
-      {/* ABONAR A META */}
-
-      {contributionGoal && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={() =>
-            setContributionGoal(
-              null,
-            )
-          }
-        >
-          <div
-            className="finance-modal"
-            onMouseDown={(
-              event,
-            ) =>
-              event.stopPropagation()
-            }
-          >
-            <div className="modal-header">
-              <div>
-                <h2>
-                  Abonar a tu meta
-                </h2>
-
-                <p>
-                  Sigue avanzando
-                  hacia{" "}
-                  <strong>
-                    {
-                      contributionGoal.name
-                    }
-                  </strong>
-                  .
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setContributionGoal(
-                    null,
-                  )
-                }
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="contribution-summary">
-              <div>
-                <span>
-                  Ahorrado
-                </span>
-
-                <strong>
-                  {money(
-                    contributionGoal.current,
-                  )}
-                </strong>
-              </div>
-
-              <div>
-                <span>
-                  Objetivo
-                </span>
-
-                <strong>
-                  {money(
-                    contributionGoal.target,
-                  )}
-                </strong>
-              </div>
-            </div>
-
-            <div className="progress-track contribution-progress">
-              <div
-                style={{
-                  width: `${Math.min(
-                    (contributionGoal.current /
-                      contributionGoal.target) *
-                      100,
-                    100,
-                  )}%`,
-                }}
-              />
-            </div>
-
-            <p className="remaining-goal">
-              Te faltan{" "}
-              <strong>
-                {money(remainingGoalCents)}
-              </strong>
-            </p>
-
-            <form
-              onSubmit={
-                contributeToGoal
-              }
-              className="form-grid contribution-form"
-            >
-              <label>
-                <span>
-                  ¿Cuánto quieres
-                  abonar?
-                </span>
-
-                <div className="money-input">
-                  <span>
-                    $
-                  </span>
-
-                  <input
-                    name="amount"
-                    type="number"
-                    min="0.01"
-                    max={formatMoneyCents(remainingGoalCents)}
-                    step="0.01"
-                    placeholder="500000"
-                    autoFocus
-                    required
-                  />
-                </div>
-              </label>
-
-              <button
-                type="submit"
-                className="modal-primary"
-              >
-                Agregar al ahorro
-              </button>
-            </form>
-          </div>
-        </div>
+      {isHome && goalLedger && (
+        <GoalLedgerDialog
+          initialGoalId={goalLedger.id}
+          initialAction={goalLedger.fund ? "fund" : undefined}
+          operationKeys={goalOperationKeys}
+          onClose={() => setGoalLedger(null)}
+          onMutation={refreshAfterMutation}
+        />
       )}
       </div>
     </main>
